@@ -1,0 +1,66 @@
+# Phase 1 operations
+
+## Runtime ownership
+
+- API owns sessions, owner-filtered reads, bounded chunk receipt, and streaming finalization.
+- PostgreSQL owns durable source/job/session state. A source and PENDING job commit together.
+- Redis/BullMQ delivers jobs using JobRun IDs; the worker reconstructs missing queue entries.
+- Worker owns FFmpeg/ffprobe, retries, progress, heartbeat, upload cleanup, and expiration.
+- Local storage holds originals/parts; S3/R2 uses the same contract. Local multi-process deployment needs a shared volume.
+
+BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idempotent work](https://docs.bullmq.io/patterns/idempotent-jobs), and [retry/backoff behavior](https://docs.bullmq.io/guide/retrying-failing-jobs) inform delivery. PostgreSQL retains terminal state after queue retention expires, so replaying a completed job is a no-op.
+
+## Environment reference
+
+| Variable                                               | Phase 1 meaning                                 |
+| ------------------------------------------------------ | ----------------------------------------------- |
+| `DATABASE_URL`                                         | Required PostgreSQL URL; never browser-exposed  |
+| `REDIS_URL`                                            | Required Redis URL                              |
+| `APP_URL`                                              | Browser origin; HTTPS required in production    |
+| `API_HOST`, `API_PORT`                                 | Bind address and port                           |
+| `API_PROXY_TARGET`                                     | Optional Vite proxy upstream                    |
+| `STORAGE_PROVIDER`                                     | `local` or `s3`                                 |
+| `STORAGE_ROOT`                                         | Local storage root or S3 worker scratch base    |
+| `STORAGE_BUCKET`, `STORAGE_REGION`, `STORAGE_ENDPOINT` | S3/R2 target; bucket required for S3            |
+| `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`           | Optional SDK credentials; role chain also works |
+| `MAX_UPLOAD_BYTES`                                     | Default 20 GiB per recording                    |
+| `UPLOAD_CHUNK_BYTES`                                   | Default 8 MiB, maximum 16 MiB                   |
+| `UPLOAD_TTL_HOURS`                                     | Incomplete-session lifetime, default 24 hours   |
+| `MAX_ACTIVE_UPLOADS`                                   | Default five per account                        |
+| `FFMPEG_PATH`, `FFPROBE_PATH`                          | Worker executable paths                         |
+| `MEDIA_TIMEOUT_MS`                                     | Full decode timeout, default four hours         |
+| `WORKER_CONCURRENCY`                                   | Default two, range 1–16                         |
+| `SESSION_HOURS`                                        | Session lifetime, default 24 hours              |
+| `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
+| `LOG_LEVEL`                                            | Structured log level                            |
+| `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
+
+Reserved later-phase variables in `.env.example` include OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
+
+## Recovery
+
+**Interrupted upload:** choose Resume and reselect the original. Persisted hashes detect a wrong file before parts are skipped. If completion already committed, the UI opens its source. Expired sessions require a new upload.
+
+**Redis unavailable:** finalization still commits the original and PENDING JobRun because the API does not enqueue directly. Worker reconciliation dispatches it when Redis returns. Use persistence and `noeviction`; never flush shared Redis. Lost entries reconstruct from unfinished database jobs.
+
+**Worker stopped:** uploads stay Queued; health becomes unavailable after the 30-second heartbeat expires. Restart it. BullMQ handles stalled work, and repeated delivery after durable success is a no-op. Queue failures reconcile to database failures rather than permanent Running records. Three attempts bound each JobRun; manual retry creates a new audited run.
+
+**FFmpeg or storage unavailable:** retryable failures create FailureEvents and RETRYING state with exponential backoff. After three attempts, the source fails. Correct configuration and use Retry ingestion.
+
+**Invalid media:** deterministic failures stop after one attempt. Re-export and upload again. Supported video codecs are H.264, HEVC, VP8/9, AV1, MPEG-4, and ProRes. Dimensions are 16–8192 pixels, frame rate >0–240 fps, duration >0–24 hours. Audio is optional. Originals remain available to their owner.
+
+**Disk capacity:** pause ingress, restore space, then retry. Session limits and expiration bound active uploads but are not a storage quota. Assembly temporarily needs both parts and the original; plan at least twice in-flight capacity. Full decoding can be expensive for long footage.
+
+**Cleanup:** the worker expires abandoned sessions, deletes completed/expired upload parts by their dedicated prefix, removes any uncommitted assembled original, and deletes expired sessions. Source originals remain. Configure an object-storage lifecycle rule for incomplete multipart uploads. A hard-killed S3 worker can leave scratch media; deployment should clean old scratch files while excluding active jobs.
+
+**Database unavailable:** mutations fail visibly; the app does not claim acceptance. Restore PostgreSQL first. Back up PostgreSQL and media together because a database backup does not contain originals.
+
+## S3/R2 deployment
+
+Keep provider, bucket, endpoint, and credentials on backend services. Grant bucket-scoped list/get/put/delete/multipart permissions without public read. The adapter supports streamed multipart writes, reads, deletion, prefix cleanup, and worker materialization. Phase 1 routes chunks through the API rather than signed browser URLs. Bucket health checks reachability; deployment must verify write/read/delete permissions. No cloud account was available for a live round trip here.
+
+## Production considerations
+
+Use TLS and same-origin routing. Production mode requires HTTPS and Secure cookies. Keep PostgreSQL/Redis private. The container runs media work as a non-root user with CPU/memory and no-new-privileges settings. FFmpeg receives argument arrays, file-only protocols, and a MOV/MP4/Matroska/WebM demuxer allowlist; no remote URLs are accepted.
+
+Finalization holds an upload row lock while streaming assembly in a bounded transaction. Slow object storage may justify a future finalization queue. Large-file load/chaos tests, stronger worker isolation, disk quotas, backup/restore exercises, and deployed alerts remain Phase 9 hardening tasks.

@@ -1,0 +1,10 @@
+node_modules
+.git
+.env
+.env.*
+.data
+.tools
+dist
+apps/web/dist
+test-results
+coverage

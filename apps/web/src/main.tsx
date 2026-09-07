@@ -1,0 +1,1034 @@
+import React, { useEffect, useState, useCallback } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BrowserRouter, NavLink, Routes, Route, Link, Navigate, useParams } from 'react-router-dom';
+import {
+  Activity,
+  ArrowDownToLine,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  Clapperboard,
+  Clock3,
+  Film,
+  FolderOpen,
+  LayoutDashboard,
+  LogOut,
+  Plus,
+  RefreshCw,
+  Settings,
+  ShieldCheck,
+  UploadCloud,
+  X,
+} from 'lucide-react';
+import type { SourceView, JobView, UploadView } from '../../../packages/shared/src/index.js';
+import { api, post } from './api.js';
+import './styles.css';
+
+type User = { id: string; email: string };
+const errorText = (error: unknown) =>
+  error instanceof Error ? error.message : 'Something went wrong';
+const bytes = (value: string | number) => {
+  const n = Number(value);
+  return n < 1024 ** 2
+    ? `${(n / 1024).toFixed(1)} KB`
+    : n < 1024 ** 3
+      ? `${(n / 1024 ** 2).toFixed(1)} MB`
+      : `${(n / 1024 ** 3).toFixed(2)} GB`;
+};
+const duration = (value: number | null) =>
+  value === null
+    ? 'Pending'
+    : `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+const friendly: Record<string, string> = {
+  READY: 'Ingested',
+  UPLOADED: 'Queued',
+  PROCESSING: 'Validating',
+  SUCCEEDED: 'Completed',
+  FAILED: 'Failed',
+  PENDING: 'Pending',
+  RUNNING: 'Running',
+  RETRYING: 'Retrying',
+};
+function Badge({ state }: { state: string }) {
+  return (
+    <span className={`badge ${state.toLowerCase()}`}>
+      <span />
+      {friendly[state] ?? state}
+    </span>
+  );
+}
+function ErrorBox({ message }: { message: string }) {
+  return message ? (
+    <div className="error" role="alert">
+      {message}
+    </div>
+  ) : null;
+}
+function useData<T>(path: string) {
+  const [data, setData] = useState<T | null>(null),
+    [error, setError] = useState('');
+  const refresh = useCallback(async () => {
+    try {
+      setData(await api<T>(path));
+      setError('');
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [path]);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const result = await api<T>(path);
+        if (active) {
+          setData(result);
+          setError('');
+        }
+      } catch (e) {
+        if (active) setError(errorText(e));
+      }
+    };
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, 4000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [path]);
+  return { data, error, refresh };
+}
+function PageTitle({
+  eyebrow,
+  title,
+  description,
+  children,
+}: {
+  eyebrow: string;
+  title: string;
+  description: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <header className="page-heading">
+      <div>
+        <div className="eyebrow">{eyebrow}</div>
+        <h1>{title}</h1>
+        <p>{description}</p>
+      </div>
+      {children}
+    </header>
+  );
+}
+function Empty({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="empty">
+      <Film size={30} />
+      <h3>{title}</h3>
+      <p>{text}</p>
+      <Link className="button primary" to="/uploads">
+        <Plus size={16} /> Upload gameplay
+      </Link>
+    </div>
+  );
+}
+function SourceRows({ sources }: { sources: SourceView[] }) {
+  return (
+    <div className="source-list">
+      {sources.map((source) => (
+        <Link to={`/library/${source.id}`} className="source-row" key={source.id}>
+          <div className="file-icon">
+            <Film size={22} />
+          </div>
+          <div className="source-name">
+            <strong>{source.filename}</strong>
+            <small>
+              {source.width ? `${source.width} × ${source.height}` : 'Metadata pending'}{' '}
+              <span>·</span> {bytes(source.bytes)} <span>·</span> {duration(source.duration)}
+            </small>
+          </div>
+          <Badge state={source.status} />
+          <ChevronRight size={18} />
+        </Link>
+      ))}
+    </div>
+  );
+}
+function Dashboard() {
+  const { data, error } = useData<{
+    total: number;
+    ready: number;
+    failed: number;
+    processing: number;
+    bytes: string;
+    duration: number;
+    recent: SourceView[];
+  }>('/dashboard');
+  return (
+    <>
+      <PageTitle
+        eyebrow="YOUR CREATOR WORKSPACE"
+        title="Good footage starts here."
+        description="Bring your gameplay together. Keep every recording in view."
+      >
+        <Link className="button primary" to="/uploads">
+          <Plus size={18} /> Upload gameplay
+        </Link>
+      </PageTitle>
+      <ErrorBox message={error} />
+      <section className="hero">
+        <div>
+          <div className="eyebrow">FOUNDATION · PHASE 01</div>
+          <h2>
+            Your next great Short
+            <br />
+            starts with a recording.
+          </h2>
+          <p>
+            Upload your original gameplay. We’ll securely store it,
+            <br className="desktop" /> check the file, and organize it in your library.
+          </p>
+          <Link className="button light" to="/uploads">
+            Add your footage <ArrowRight size={17} />
+          </Link>
+        </div>
+        <div className="hero-art" aria-hidden="true">
+          <div className="orbit one" />
+          <div className="orbit two" />
+          <div className="frame back" />
+          <div className="frame front">
+            <Clapperboard size={44} />
+            <div className="art-lines">
+              <i />
+              <i />
+              <i />
+            </div>
+            <span>READY FOR THE NEXT CHAPTER</span>
+          </div>
+          <div className="art-check">
+            <Check size={20} />
+          </div>
+        </div>
+      </section>
+      <div className="stats">
+        {[
+          ['Source recordings', data?.total, FolderOpen],
+          ['Ingestion complete', data?.ready, ShieldCheck],
+          ['In progress', data?.processing, Clock3],
+          ['Needs attention', data?.failed, Activity],
+        ].map(([label, value, Icon]) => {
+          const MetricIcon = Icon as typeof Film;
+          return (
+            <section className="stat" key={String(label)}>
+              <div>
+                <span>{String(label)}</span>
+                <MetricIcon size={18} />
+              </div>
+              <strong>{value === undefined ? '—' : String(value)}</strong>
+              <small>
+                {label === 'Ingestion complete'
+                  ? 'Validated and stored'
+                  : label === 'Needs attention'
+                    ? 'Failed ingestion jobs'
+                    : label === 'In progress'
+                      ? 'Queued or validating'
+                      : data
+                        ? `${bytes(data.bytes)} of original footage`
+                        : 'Loading your library'}
+              </small>
+            </section>
+          );
+        })}
+      </div>
+      <div className="dashboard-grid">
+        <section className="panel">
+          <div className="panel-heading">
+            <h2>Recent recordings</h2>
+            <Link to="/library">
+              View library <ArrowRight size={15} />
+            </Link>
+          </div>
+          {data?.recent.length ? (
+            <SourceRows sources={data.recent} />
+          ) : data ? (
+            <Empty
+              title="A fresh start for your footage"
+              text="Your uploaded recordings will appear here."
+            />
+          ) : (
+            <p className="muted pad">Loading recordings…</p>
+          )}
+        </section>
+        <section className="panel workflow">
+          <div className="panel-heading">
+            <h2>From file to library</h2>
+            <span className="mini-label">LIVE</span>
+          </div>
+          {[
+            ['01', 'Upload your gameplay', 'MP4, MOV, or WebM. Resume interrupted uploads.'],
+            ['02', 'Validate the recording', 'Check format, resolution, audio and file integrity.'],
+            ['03', 'Build your source library', 'Keep your originals and see processing status.'],
+          ].map(([n, t, d]) => (
+            <div className="step" key={n}>
+              <span>{n}</span>
+              <div>
+                <h3>{t}</h3>
+                <p>{d}</p>
+              </div>
+            </div>
+          ))}
+          <div className="phase-note">
+            Highlight analysis and Short creation arrive in later phases.
+          </div>
+        </section>
+      </div>
+    </>
+  );
+}
+function Uploads() {
+  const { data: config } = useData<{ maxUploadBytes: number }>('/config');
+  const { data, error: listError, refresh } = useData<{ uploads: UploadView[] }>('/uploads');
+  const [file, setFile] = useState<File | null>(null),
+    [rights, setRights] = useState(false),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false),
+    [progress, setProgress] = useState(0),
+    [stage, setStage] = useState(''),
+    [resumeId, setResumeId] = useState<string | null>(null),
+    [sourceId, setSourceId] = useState('');
+  async function send() {
+    if (!file || !rights) return;
+    setBusy(true);
+    setError('');
+    setSourceId('');
+    try {
+      const ext = file.name.split('.').pop()?.toLowerCase();
+      const mimeType =
+        ext === 'mov' ? 'video/quicktime' : ext === 'webm' ? 'video/webm' : 'video/mp4';
+      const upload = resumeId
+        ? await api<UploadView>(`/uploads/${resumeId}`)
+        : await post<UploadView>('/uploads', {
+            filename: file.name,
+            bytes: file.size,
+            mimeType,
+            rightsAcknowledged: true,
+          });
+      setResumeId(upload.id);
+      if (upload.sourceId) {
+        setSourceId(upload.sourceId);
+        setStage('Upload already completed.');
+        setResumeId(null);
+        setFile(null);
+        setRights(false);
+        await refresh();
+        return;
+      }
+      if (upload.filename !== file.name || Number(upload.bytes) !== file.size)
+        throw new Error('To resume, select the same original file with the same name and size.');
+      const count = Math.ceil(file.size / upload.chunkBytes);
+      for (let i = 0; i < count; i++) {
+        setStage(`Uploading part ${i + 1} of ${count}`);
+        const chunk = file.slice(
+          i * upload.chunkBytes,
+          Math.min(file.size, (i + 1) * upload.chunkBytes),
+        );
+        const hash = Array.from(
+          new Uint8Array(await crypto.subtle.digest('SHA-256', await chunk.arrayBuffer())),
+        )
+          .map((b) => b.toString(16).padStart(2, '0'))
+          .join('');
+        const storedHash = upload.partHashes?.[String(i)];
+        if (storedHash && storedHash !== hash)
+          throw new Error(
+            'This file differs from the original upload. Select the original file or cancel and start again.',
+          );
+        if (!storedHash)
+          await api(`/uploads/${upload.id}/parts/${i}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: chunk,
+          });
+        setProgress(Math.round(((i + 1) / count) * 100));
+      }
+      setStage('Finalizing upload…');
+      const source = await post<SourceView>(`/uploads/${upload.id}/complete`);
+      setSourceId(source.id);
+      setStage('Upload complete. Ingestion is queued.');
+      setResumeId(null);
+      setFile(null);
+      setRights(false);
+      await refresh();
+    } catch (e) {
+      setError(errorText(e));
+      setStage('Upload paused. Select the same file to resume.');
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function cancel(id: string) {
+    try {
+      await api(`/uploads/${id}`, { method: 'DELETE' });
+      if (id === resumeId) setResumeId(null);
+      await refresh();
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }
+  return (
+    <>
+      <PageTitle
+        eyebrow="SOURCE FOOTAGE"
+        title="Upload gameplay"
+        description="Your originals, safely stored and ready for what comes next."
+      />
+      <ErrorBox message={error || listError} />
+      <div className="upload-layout">
+        <section className="panel upload-panel">
+          <label
+            className={`drop-zone ${busy ? 'busy' : ''}`}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (!busy) {
+                setFile(e.dataTransfer.files[0] ?? null);
+                setProgress(0);
+              }
+            }}
+          >
+            <UploadCloud size={38} />
+            <h2>{file ? file.name : 'Drop your recording here'}</h2>
+            <p>
+              or <span>browse files</span> to get started
+            </p>
+            <small>
+              MP4, MOV, WebM · Up to{' '}
+              {config ? bytes(config.maxUploadBytes) : 'your configured limit'}
+            </small>
+            <input
+              aria-label="Choose gameplay video"
+              type="file"
+              accept=".mp4,.mov,.webm"
+              disabled={busy}
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setProgress(0);
+              }}
+            />
+          </label>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={rights}
+              disabled={busy}
+              onChange={(e) => setRights(e.target.checked)}
+            />
+            <span>I own this footage or have the necessary permission to publish it.</span>
+          </label>
+          {resumeId && (
+            <p className="resume-note">
+              Resuming upload <code>{resumeId.slice(0, 8)}</code>. Select its original recording.
+            </p>
+          )}
+          <button
+            className="button primary full"
+            disabled={!file || !rights || busy}
+            onClick={() => {
+              void send();
+            }}
+          >
+            <UploadCloud size={18} />
+            {busy ? stage : resumeId ? 'Resume upload' : 'Upload recording'}
+          </button>
+          {(busy || stage) && (
+            <div className="upload-progress" aria-live="polite">
+              <progress max={100} value={progress} />
+              <p>
+                {stage} {busy ? `${progress}% transferred` : ''}
+              </p>
+            </div>
+          )}
+          {sourceId && (
+            <Link className="success-link" to={`/library/${sourceId}`}>
+              <Check size={18} /> Open your recording <ArrowRight size={16} />
+            </Link>
+          )}
+        </section>
+        <aside className="panel upload-help">
+          <ShieldCheck size={27} />
+          <h2>Made for long sessions.</h2>
+          <p>
+            Uploads are saved in parts. If your connection drops, choose the same file and pick up
+            where you left off.
+          </p>
+          <hr />
+          <h3>What happens next?</h3>
+          <p>
+            A background worker checks the actual format, reads its metadata, and decodes the
+            recording to check for corruption.
+          </p>
+          <p>
+            Your original file stays intact. Ingestion does not create highlights or publish
+            content.
+          </p>
+        </aside>
+      </div>
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Unfinished uploads</h2>
+          <span className="muted">Saved for 24 hours by default</span>
+        </div>
+        {data?.uploads.length ? (
+          data.uploads.map((u) => (
+            <div className="source-row" key={u.id}>
+              <Film size={24} />
+              <div className="source-name">
+                <strong>{u.filename}</strong>
+                <small>
+                  {u.receivedParts.length} of {Math.ceil(Number(u.bytes) / u.chunkBytes)} parts
+                  received · {bytes(u.bytes)}
+                </small>
+              </div>
+              <button
+                disabled={busy}
+                className="button secondary"
+                onClick={() => {
+                  setResumeId(u.id);
+                  setFile(null);
+                  setStage('Select the original recording above.');
+                }}
+              >
+                Resume
+              </button>
+              <button
+                disabled={busy}
+                aria-label={`Cancel upload ${u.filename}`}
+                className="icon-button"
+                onClick={() => {
+                  void cancel(u.id);
+                }}
+              >
+                <X size={18} />
+              </button>
+            </div>
+          ))
+        ) : (
+          <p className="muted pad">No unfinished uploads.</p>
+        )}
+      </section>
+    </>
+  );
+}
+function Library() {
+  const [search, setSearch] = useState(''),
+    [status, setStatus] = useState(''),
+    [page, setPage] = useState(1);
+  const { data, error } = useData<{ sources: SourceView[]; total: number }>(
+    `/sources?page=${page}&search=${encodeURIComponent(search)}${status ? `&status=${status}` : ''}`,
+  );
+  return (
+    <>
+      <PageTitle
+        eyebrow="YOUR ORIGINALS"
+        title="Source library"
+        description="Every recording, with its metadata and ingestion history."
+      >
+        <Link className="button primary" to="/uploads">
+          <Plus size={17} /> Upload gameplay
+        </Link>
+      </PageTitle>
+      <ErrorBox message={error} />
+      <div className="filters">
+        <input
+          aria-label="Search recordings"
+          placeholder="Search recordings…"
+          value={search}
+          onChange={(e) => {
+            setSearch(e.target.value);
+            setPage(1);
+          }}
+        />
+        <select
+          aria-label="Filter status"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          {['UPLOADED', 'PROCESSING', 'READY', 'FAILED'].map((s) => (
+            <option key={s} value={s}>
+              {friendly[s]}
+            </option>
+          ))}
+        </select>
+      </div>
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Recordings</h2>
+          <span className="muted">{data?.total ?? '—'} total</span>
+        </div>
+        {data?.sources.length ? (
+          <SourceRows sources={data.sources} />
+        ) : data ? (
+          <Empty
+            title={search || status ? 'No matching recordings' : 'Your library is ready'}
+            text={
+              search || status
+                ? 'Try a different search or filter.'
+                : 'Start by uploading your first gameplay session.'
+            }
+          />
+        ) : (
+          <p className="pad">Loading…</p>
+        )}
+      </section>
+      <div className="pagination">
+        <button
+          className="button secondary"
+          disabled={page === 1}
+          onClick={() => setPage(page - 1)}
+        >
+          Previous
+        </button>
+        <span>Page {page}</span>
+        <button
+          className="button secondary"
+          disabled={!data || page * 25 >= data.total}
+          onClick={() => setPage(page + 1)}
+        >
+          Next
+        </button>
+      </div>
+    </>
+  );
+}
+function SourceDetail() {
+  const { id } = useParams();
+  const { data, error, refresh } = useData<SourceView>(`/sources/${id}`);
+  const [actionError, setActionError] = useState(''),
+    [busy, setBusy] = useState(false);
+  async function retry() {
+    setBusy(true);
+    try {
+      await post(`/sources/${id}/retry`);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <Link className="back-link" to="/library">
+        ← Source library
+      </Link>
+      <PageTitle
+        eyebrow="RECORDING DETAILS"
+        title={data?.filename ?? 'Recording'}
+        description="Original media and validation history."
+      />
+      <ErrorBox message={error || actionError} />
+      {data && (
+        <>
+          <div className="detail-actions">
+            <Badge state={data.status} />
+            <a className="button secondary" href={`/api/sources/${data.id}/download`}>
+              <ArrowDownToLine size={16} /> Download original
+            </a>
+            {data.status === 'FAILED' && (
+              <button
+                disabled={busy}
+                className="button primary"
+                onClick={() => {
+                  void retry();
+                }}
+              >
+                <RefreshCw size={16} /> Retry ingestion
+              </button>
+            )}
+          </div>
+          <section className="panel metadata">
+            {[
+              ['Duration', duration(data.duration)],
+              ['Resolution', data.width ? `${data.width} × ${data.height}` : 'Pending'],
+              ['Video codec', data.videoCodec ?? 'Pending'],
+              [
+                'Audio',
+                data.hasAudio === null
+                  ? 'Pending'
+                  : data.hasAudio
+                    ? (data.audioCodec ?? 'Present')
+                    : 'No audio track',
+              ],
+              ['File size', bytes(data.bytes)],
+              ['Frame rate', data.frameRate ? `${data.frameRate.toFixed(2)} fps` : 'Pending'],
+              ['Uploaded', new Date(data.createdAt).toLocaleString()],
+              [
+                'Publishing rights',
+                `Acknowledged ${new Date(data.rightsAcknowledgedAt).toLocaleDateString()}`,
+              ],
+            ].map(([k, v]) => (
+              <div key={k}>
+                <small>{k}</small>
+                <strong>{v}</strong>
+              </div>
+            ))}
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
+              <h2>Ingestion jobs</h2>
+            </div>
+            <JobRows jobs={data.jobs} />
+          </section>
+          <p className="phase-note">
+            Ingested means the source passed media validation. Game detection, highlights, and Short
+            generation are not active in Phase 1.
+          </p>
+        </>
+      )}
+    </>
+  );
+}
+function JobRows({ jobs }: { jobs: JobView[] }) {
+  return (
+    <div>
+      {jobs.map((job) => (
+        <div className="job-row" key={job.id}>
+          <div className="job-header">
+            <div>
+              <strong>{job.source?.filename ?? 'Media validation'}</strong>
+              <small>
+                Attempt {job.attempt} · {new Date(job.createdAt).toLocaleString()}
+              </small>
+            </div>
+            <Badge state={job.state} />
+          </div>
+          <progress value={job.progress} max={100} />
+          <small>
+            {job.progress}% · {job.errorCode ?? 'INGEST'}
+          </small>
+          {job.errorMessage && <p className="job-error">{job.errorMessage}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+function QueuePage() {
+  const { data, error } = useData<{ jobs: JobView[] }>('/jobs');
+  return (
+    <>
+      <PageTitle
+        eyebrow="BACKGROUND PROCESSING"
+        title="Job queue"
+        description="Follow validation progress, attempts, and failures. Updates every few seconds."
+      />
+      <ErrorBox message={error} />
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Recent ingestion jobs</h2>
+          <span className="muted">Latest 100</span>
+        </div>
+        {data?.jobs.length ? (
+          <JobRows jobs={data.jobs} />
+        ) : (
+          <p className="muted pad">
+            {data ? 'No jobs yet. Upload a recording to begin.' : 'Loading jobs…'}
+          </p>
+        )}
+      </section>
+    </>
+  );
+}
+function HealthPage() {
+  const [data, setData] = useState<{
+      status: string;
+      services: Record<string, string>;
+      heartbeat: string | null;
+    } | null>(null),
+    [error, setError] = useState('');
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const response = await fetch('/api/health', { signal: AbortSignal.timeout(10000) });
+        const value = await response.json();
+        if (!response.ok && response.status !== 503) throw new Error(value.message);
+        if (active) {
+          setData(value);
+          setError('');
+        }
+      } catch (e) {
+        if (active) setError(errorText(e));
+      }
+    };
+    void load();
+    const timer = setInterval(() => {
+      void load();
+    }, 5000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, []);
+  return (
+    <>
+      <PageTitle
+        eyebrow="OPERATIONS"
+        title="System health"
+        description="Live readiness of the services behind your workspace."
+      />
+      <ErrorBox message={error} />
+      <div className="health-grid">
+        {Object.entries(data?.services ?? {}).map(([name, state]) => (
+          <section className="panel health-card" key={name}>
+            <Activity size={22} />
+            <h2>{name}</h2>
+            <Badge state={state} />
+            <p>
+              {name === 'worker'
+                ? 'Validates media and recovers queued jobs.'
+                : name === 'database'
+                  ? 'Source metadata, sessions, and durable job records.'
+                  : name === 'redis'
+                    ? 'Background job delivery and worker heartbeat.'
+                    : 'Original recordings and upload parts.'}
+            </p>
+          </section>
+        ))}
+      </div>
+      {data?.status === 'degraded' && (
+        <div className="error">
+          A service needs attention. Accepted uploads remain recorded in the database while the
+          worker recovers.
+        </div>
+      )}
+      <p className="muted">
+        Last worker heartbeat:{' '}
+        {data?.heartbeat ? new Date(data.heartbeat).toLocaleString() : 'Not available'}
+      </p>
+      <p className="phase-note">
+        AI, renderer, YouTube and scheduling services are not part of Phase 1.
+      </p>
+    </>
+  );
+}
+function SettingsPage({ user }: { user: User }) {
+  const { data, error } = useData<{
+    timezone: string;
+    maxUploadBytes: number;
+    chunkBytes: number;
+    storage: string;
+  }>('/config');
+  return (
+    <>
+      <PageTitle
+        eyebrow="WORKSPACE"
+        title="Settings"
+        description="Your account and current foundation configuration."
+      />
+      <ErrorBox message={error} />
+      <section className="panel metadata">
+        {[
+          ['Account', user.email],
+          ['Timezone', data?.timezone],
+          ['Storage', data?.storage],
+          ['Maximum recording size', data ? bytes(data.maxUploadBytes) : '…'],
+          ['Upload chunk size', data ? bytes(data.chunkBytes) : '…'],
+        ].map(([k, v]) => (
+          <div key={k}>
+            <small>{k}</small>
+            <strong>{v}</strong>
+          </div>
+        ))}
+      </section>
+      <p className="phase-note">
+        Infrastructure settings are configured through the server environment. Scheduling and
+        publishing preferences will arrive with their implementation phases.
+      </p>
+    </>
+  );
+}
+function Login({ onLogin }: { onLogin(user: User): void }) {
+  const [email, setEmail] = useState(''),
+    [password, setPassword] = useState(''),
+    [error, setError] = useState(''),
+    [busy, setBusy] = useState(false);
+  async function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      onLogin((await post<{ user: User }>('/auth/login', { email, password })).user);
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="login-page">
+      <div className="login-story">
+        <div className="brand">
+          <Clapperboard /> shorts<span>agent</span>
+        </div>
+        <div>
+          <div className="eyebrow">LESS ADMIN. MORE GAMEPLAY.</div>
+          <h1>
+            Give your footage
+            <br />a place to begin.
+          </h1>
+          <p>
+            A creator workspace for the moments
+            <br />
+            worth keeping.
+          </p>
+        </div>
+        <small>AI Gameplay Shorts Agent · Foundation</small>
+      </div>
+      <main className="login-main">
+        <form
+          className="login-form"
+          onSubmit={(e) => {
+            void submit(e);
+          }}
+        >
+          <div className="eyebrow">YOUR WORKSPACE AWAITS</div>
+          <h1>Welcome back.</h1>
+          <p>Sign in to manage your gameplay recordings.</p>
+          <ErrorBox message={error} />
+          <label>
+            Email
+            <input
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+          </label>
+          <label>
+            Password
+            <input
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+          <button disabled={busy} className="button primary full">
+            {busy ? 'Signing in…' : 'Sign in'}
+            <ArrowRight size={17} />
+          </button>
+          <p className="login-note">Use the account provisioned by your workspace administrator.</p>
+        </form>
+      </main>
+    </div>
+  );
+}
+function App() {
+  const [user, setUser] = useState<User | null>(null),
+    [loading, setLoading] = useState(true),
+    [error, setError] = useState('');
+  useEffect(() => {
+    void api<{ user: User }>('/auth/me')
+      .then((r) => setUser(r.user))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+    const expired = () => setUser(null);
+    window.addEventListener('session-expired', expired);
+    return () => window.removeEventListener('session-expired', expired);
+  }, []);
+  if (loading) return <div className="loading">Opening your workspace…</div>;
+  if (!user) return <Login onLogin={setUser} />;
+  const nav = [
+    ['/dashboard', 'Overview', LayoutDashboard],
+    ['/uploads', 'Uploads', UploadCloud],
+    ['/library', 'Source library', FolderOpen],
+    ['/queue', 'Job queue', Clock3],
+    ['/health', 'System health', Activity],
+    ['/settings', 'Settings', Settings],
+  ] as const;
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <Link to="/dashboard" className="brand">
+          <Clapperboard size={26} /> shorts<span>agent</span>
+        </Link>
+        <div className="workspace-tag">
+          <span /> CREATOR WORKSPACE
+        </div>
+        <nav>
+          {nav.map(([to, text, Icon]) => (
+            <NavLink key={to} to={to}>
+              <Icon size={19} />
+              {text}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="foundation">
+            <span className="mini-label">PHASE 01</span>
+            <strong>A foundation for great content.</strong>
+            <p>Upload, validate, organize.</p>
+          </div>
+          <div className="account">
+            <div className="avatar">{user.email[0]?.toUpperCase()}</div>
+            <div>
+              <strong>Creator account</strong>
+              <small>{user.email}</small>
+            </div>
+            <button
+              className="icon-button"
+              aria-label="Sign out"
+              onClick={() => {
+                void post('/auth/logout')
+                  .then(() => setUser(null))
+                  .catch((e) => setError(errorText(e)));
+              }}
+            >
+              <LogOut size={17} />
+            </button>
+          </div>
+        </div>
+      </aside>
+      <div className="main-shell">
+        <div className="topbar">
+          <span>
+            Workspace <ChevronRight size={14} /> Gameplay
+          </span>
+          <span className="private-label">
+            <ShieldCheck size={14} /> Private workspace
+          </span>
+        </div>
+        <main className="content">
+          <ErrorBox message={error} />
+          <Routes>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/uploads" element={<Uploads />} />
+            <Route path="/library" element={<Library />} />
+            <Route path="/library/:id" element={<SourceDetail />} />
+            <Route path="/queue" element={<QueuePage />} />
+            <Route path="/health" element={<HealthPage />} />
+            <Route path="/settings" element={<SettingsPage user={user} />} />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+          <footer>
+            Built around your gameplay.<span>Shorts Agent / Foundation</span>
+          </footer>
+        </main>
+      </div>
+    </div>
+  );
+}
+createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <BrowserRouter>
+      <App />
+    </BrowserRouter>
+  </React.StrictMode>,
+);

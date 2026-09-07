@@ -1,0 +1,71 @@
+{
+  "name": "youtube-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "format": "prettier --write apps packages scripts tests infra docs *.json *.yml *.ts *.js .github",
+    "format:check": "prettier --check apps packages scripts tests infra docs *.json *.yml *.ts *.js .github",
+    "dev": "concurrently -k -n api,worker,web \"npm:dev:api\" \"npm:dev:worker\" \"npm:dev:web\"",
+    "dev:api": "tsx watch apps/api/src/main.ts",
+    "dev:worker": "tsx watch apps/worker/src/main.ts",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "build": "tsc -p tsconfig.build.json && vite build --config apps/web/vite.config.ts",
+    "start:api": "node dist/apps/api/src/main.js",
+    "start:worker": "node dist/apps/worker/src/main.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run",
+    "test:integration": "tsx scripts/integration.ts",
+    "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
+    "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
+    "db:dev": "prisma migrate dev --schema packages/db/prisma/schema.prisma",
+    "user:create": "tsx scripts/create-user.ts"
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.883.0",
+    "@aws-sdk/lib-storage": "^3.883.0",
+    "@fastify/cookie": "^11.0.2",
+    "@fastify/helmet": "^13.0.1",
+    "@fastify/rate-limit": "^10.3.0",
+    "@prisma/client": "^6.19.0",
+    "bullmq": "^5.58.5",
+    "dotenv": "^17.2.1",
+    "fastify": "^5.6.0",
+    "ioredis": "^5.7.0",
+    "lucide-react": "^0.468.0",
+    "pino": "^9.9.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "react-router-dom": "^7.8.2",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.34.0",
+    "@tailwindcss/vite": "^4.1.12",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.1.12",
+    "@types/react-dom": "^19.1.9",
+    "@vitejs/plugin-react": "^4.7.0",
+    "concurrently": "^9.2.1",
+    "eslint": "^9.34.0",
+    "prettier": "^3.9.6",
+    "prisma": "^6.19.0",
+    "tailwindcss": "^4.1.12",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "typescript-eslint": "^8.41.0",
+    "vite": "^6.4.1",
+    "vitest": "^3.2.4"
+  }
+}

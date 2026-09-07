@@ -1,0 +1,34 @@
+name: Phase 1 checks
+on: [push, pull_request]
+jobs:
+  foundation:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env: { POSTGRES_USER: shorts, POSTGRES_PASSWORD: shorts_test, POSTGRES_DB: shorts_test }
+        ports: [5432:5432]
+        options: --health-cmd "pg_isready -U shorts -d shorts_test" --health-interval 5s --health-timeout 3s --health-retries 15
+      redis:
+        image: redis:7.4-alpine
+        ports: [6379:6379]
+        options: --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 15
+    env:
+      DATABASE_URL: postgresql://shorts:shorts_test@localhost:5432/shorts_test
+      REDIS_URL: redis://localhost:6379
+      NODE_ENV: test
+      LOG_LEVEL: silent
+      STORAGE_ROOT: .data/ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - run: npm run db:generate
+      - run: npm run db:migrate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run test:integration
+      - run: npm run build

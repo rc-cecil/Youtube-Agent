@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": ".", "sourceMap": true },
+  "include": ["apps/api/src", "apps/worker/src", "packages", "scripts/create-user.ts"],
+  "exclude": ["node_modules", "**/*.test.ts"]
+}

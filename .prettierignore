@@ -1,0 +1,9 @@
+node_modules
+.tools
+.data
+dist
+apps/web/dist
+output
+.playwright-cli
+package-lock.json
+docs/master-specification.md

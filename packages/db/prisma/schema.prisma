@@ -1,0 +1,148 @@
+generator client {
+  provider = "prisma-client-js"
+}
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+enum SourceState {
+  UPLOADED
+  PROCESSING
+  ANALYZING
+  READY
+  FAILED
+  ARCHIVED
+}
+enum JobState {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  RETRYING
+  CANCELLED
+}
+enum UploadState {
+  OPEN
+  COMPLETE
+  EXPIRED
+}
+model User {
+  id String @id @default(uuid())
+  email String @unique
+  passwordHash String
+  createdAt DateTime @default(now())
+  sessions Session[]
+  sources SourceVideo[]
+  uploads UploadSession[]
+  auditLogs AuditLog[]
+}
+model Session {
+  id String @id @default(uuid())
+  tokenHash String @unique
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  @@index([expiresAt])
+}
+model UploadSession {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  filename String
+  mimeType String
+  bytes BigInt
+  chunkBytes Int
+  state UploadState @default(OPEN)
+  rightsAcknowledgedAt DateTime
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  parts UploadPart[]
+  source SourceVideo?
+  @@index([userId, state])
+  @@index([state, expiresAt])
+}
+model UploadPart {
+  id String @id @default(uuid())
+  uploadId String
+  upload UploadSession @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  index Int
+  bytes Int
+  sha256 String
+  storageKey String
+  @@unique([uploadId, index])
+}
+model SourceVideo {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  uploadId String @unique
+  upload UploadSession @relation(fields: [uploadId], references: [id])
+  filename String
+  mimeType String
+  bytes BigInt
+  sha256 String
+  status SourceState @default(UPLOADED)
+  rightsAcknowledgedAt DateTime
+  duration Float?
+  width Int?
+  height Int?
+  videoCodec String?
+  audioCodec String?
+  hasAudio Boolean?
+  container String?
+  frameRate Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  assets VideoAsset[]
+  jobs JobRun[]
+  @@index([userId, createdAt])
+  @@index([userId, sha256])
+}
+model VideoAsset {
+  id String @id @default(uuid())
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  kind String
+  storageKey String @unique
+  bytes BigInt
+  createdAt DateTime @default(now())
+  @@unique([sourceId, kind])
+}
+model JobRun {
+  id String @id @default(uuid())
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  kind String @default("INGEST")
+  state JobState @default(PENDING)
+  progress Int @default(0)
+  attempt Int @default(0)
+  errorCode String?
+  errorMessage String?
+  startedAt DateTime?
+  finishedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  failures FailureEvent[]
+  @@index([state, createdAt])
+  @@index([sourceId, createdAt])
+}
+model FailureEvent {
+  id String @id @default(uuid())
+  jobId String
+  job JobRun @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  errorCode String
+  errorMessage String
+  attempt Int
+  createdAt DateTime @default(now())
+}
+model AuditLog {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id])
+  action String
+  resourceId String?
+  createdAt DateTime @default(now())
+  @@index([userId, createdAt])
+}
