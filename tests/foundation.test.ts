@@ -13,6 +13,18 @@ import {
   GenericGameplayDetector,
 } from '../packages/video-analysis/src/generic-detector.js';
 import { identifyGame } from '../packages/video-analysis/src/game-identification.js';
+import {
+  candidateRankingSchema,
+  MockCandidateRankingProvider,
+  OpenAICandidateRankingProvider,
+} from '../packages/ai/src/index.js';
+import {
+  CODDetector,
+  FCDetector,
+  FortniteDetector,
+  GTADetector,
+  detectorForGame,
+} from '../packages/game-detectors/src/index.js';
 
 describe('password and session security', () => {
   it('salts passwords and rejects wrong passwords', async () => {
@@ -44,12 +56,32 @@ describe('configuration', () => {
   it('rejects unsafe production origins', () => {
     expect(() => parseConfig({ ...env, NODE_ENV: 'production' })).toThrow('HTTPS');
   });
+  it('does not permit development mock rankings in production', () => {
+    expect(() =>
+      parseConfig({
+        ...env,
+        NODE_ENV: 'production',
+        APP_URL: 'https://shorts.example.com',
+      }),
+    ).toThrow('AI_MODE');
+  });
   it('requires an S3 bucket', () => {
     expect(() => parseConfig({ ...env, STORAGE_PROVIDER: 's3' })).toThrow('STORAGE_BUCKET');
   });
   it('rejects invalid timezone and limits', () => {
     expect(() => parseConfig({ ...env, TIMEZONE: 'invalid-zone' })).toThrow();
     expect(() => parseConfig({ ...env, WORKER_CONCURRENCY: '0' })).toThrow();
+  });
+  it('requires explicit OpenAI credentials and a vision model in live mode', () => {
+    expect(() => parseConfig({ ...env, AI_MODE: 'openai' })).toThrow('OPENAI_API_KEY');
+    expect(() =>
+      parseConfig({
+        ...env,
+        AI_MODE: 'openai',
+        OPENAI_API_KEY: 'test-key',
+        AI_VISION_MODEL: 'test-vision-model',
+      }),
+    ).not.toThrow();
   });
 });
 describe('upload contracts', () => {
@@ -205,5 +237,159 @@ describe('Phase 2 gameplay analysis', () => {
       );
     expect(candidate).toMatchObject({ eventTime: 10, signalScore: 10 });
     expect(candidate?.reason).toContain('Fallback');
+  });
+});
+
+describe('Phase 3 game intelligence', () => {
+  const id = '4c15b0ae-c2cf-4d4c-b8c6-ec6f73012345',
+    candidate = {
+      id,
+      startTime: 4,
+      eventTime: 8,
+      endTime: 14,
+      eventType: 'GAMEPLAY_ACTIVITY_SPIKE',
+      signalScore: 72,
+      signalKinds: ['MOTION_PEAK', 'AUDIO_PEAK'],
+      frames: ['data:image/jpeg;base64,AA=='],
+    };
+  it('selects the four adapters only for confident game identification', () => {
+    expect(detectorForGame('EA Sports FC', 0.9)).toBeInstanceOf(FCDetector);
+    expect(detectorForGame('Grand Theft Auto VI', 0.9)).toBeInstanceOf(GTADetector);
+    expect(detectorForGame('Call of Duty: Warzone', 0.9)).toBeInstanceOf(CODDetector);
+    expect(detectorForGame('Fortnite', 0.9)).toBeInstanceOf(FortniteDetector);
+    expect(detectorForGame('Fortnite', 0.4)).toBeInstanceOf(GenericGameplayDetector);
+  });
+  it('keeps adapter labels observational until sampled frames are interpreted', () => {
+    const [result] = new CODDetector().enrichCandidates(
+      new CODDetector().scoreEvents(
+        new CODDetector().detectEvents(
+          [
+            { kind: 'MOTION_PEAK', timestamp: 10, value: 0.4 },
+            { kind: 'AUDIO_PEAK', timestamp: 10.2, value: -3 },
+          ],
+          30,
+        ),
+      ),
+      30,
+      1,
+    );
+    expect(result?.eventType).toBe('COD_FIREFIGHT_OR_REACTION_SEQUENCE');
+    expect(result?.reason).toContain('required before naming a kill');
+  });
+  it('returns bounded, explicitly labeled deterministic rankings in mock mode', async () => {
+    const result = await new MockCandidateRankingProvider().rank({
+      inputHash: 'hash',
+      ownerHash: 'owner-hash',
+      detectorProfile: 'generic-gameplay-v1',
+      currentGame: 'Unknown gameplay',
+      currentGameConfidence: 0,
+      candidates: [candidate],
+    });
+    expect(result.provider).toBe('mock');
+    expect(result.output.rankings[0]).toMatchObject({
+      candidateId: id,
+      confidence: 35,
+      eventType: 'GAMEPLAY_ACTIVITY_SPIKE',
+    });
+    expect(result.output.rankings[0]?.reason).toContain('no semantic event claim');
+    expect(candidateRankingSchema.safeParse(result.output).success).toBe(true);
+  });
+  it('uses the Responses API with strict structured output and low-detail finalist frames', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const config = parseConfig({
+        DATABASE_URL: 'postgresql://localhost/test',
+        REDIS_URL: 'redis://localhost',
+        AI_MODE: 'openai',
+        OPENAI_API_KEY: 'test-key',
+        AI_VISION_MODEL: 'test-vision-model',
+        AI_INPUT_USD_PER_1M: '1',
+        AI_OUTPUT_USD_PER_1M: '2',
+      }),
+      ranking = {
+        candidateId: id,
+        eventType: 'VISIBLE_GAMEPLAY_EVENT',
+        eventImportance: 70,
+        excitement: 80,
+        surprise: 60,
+        skill: 75,
+        humor: 20,
+        tension: 65,
+        emotionalReaction: 55,
+        visualClarity: 90,
+        contextIndependence: 70,
+        hookPotential: 85,
+        retentionPotential: 80,
+        sharePotential: 72,
+        novelty: 50,
+        editability: 88,
+        confidence: 91,
+        highlightScore: 81,
+        reason: 'The visible sequence has a clear setup and payoff.',
+      },
+      provider = new OpenAICandidateRankingProvider(config, async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            output_text: JSON.stringify({
+              gameIdentification: { game: 'Fortnite', edition: null, confidence: 92 },
+              rankings: [ranking],
+            }),
+            usage: { input_tokens: 1000, output_tokens: 500 },
+          }),
+          { status: 200 },
+        );
+      });
+    const result = await provider.rank({
+      inputHash: 'input-hash',
+      ownerHash: 'safe-owner-hash',
+      detectorProfile: 'fortnite-v1',
+      currentGame: 'Fortnite',
+      currentGameConfidence: 0.8,
+      candidates: [candidate],
+    });
+    expect(requestBody).toMatchObject({
+      model: 'test-vision-model',
+      store: false,
+      safety_identifier: 'safe-owner-hash',
+      prompt_cache_key: 'input-hash',
+      text: { format: { type: 'json_schema', strict: true } },
+    });
+    expect(JSON.stringify(requestBody)).toContain('"detail":"low"');
+    expect(result.output.rankings[0]?.highlightScore).toBe(81);
+    expect(result.estimatedCostUsd).toBe(0.002);
+  });
+  it('rejects scores outside the documented zero-to-one-hundred range', () => {
+    expect(
+      candidateRankingSchema.safeParse({
+        gameIdentification: { game: 'Unknown gameplay', edition: null, confidence: 0 },
+        rankings: [
+          {
+            candidateId: id,
+            eventType: 'ACTIVITY',
+            ...Object.fromEntries(
+              [
+                'eventImportance',
+                'excitement',
+                'surprise',
+                'skill',
+                'humor',
+                'tension',
+                'emotionalReaction',
+                'visualClarity',
+                'contextIndependence',
+                'hookPotential',
+                'retentionPotential',
+                'sharePotential',
+                'novelty',
+                'editability',
+                'confidence',
+                'highlightScore',
+              ].map((key) => [key, key === 'highlightScore' ? 101 : 50]),
+            ),
+            reason: 'Out of bounds.',
+          },
+        ],
+      }).success,
+    ).toBe(false);
   });
 });

@@ -59,8 +59,34 @@ export async function backfillAnalysisJobs(db: PrismaClient) {
       await tx.jobRun.create({ data: { sourceId: source.id, kind: 'ANALYZE' } });
     });
 }
+export async function backfillRankingJobs(db: PrismaClient) {
+  const sources = await db.sourceVideo.findMany({
+    where: {
+      status: 'READY',
+      analysis: { is: { status: 'SUCCEEDED' } },
+      candidates: { some: {} },
+      jobs: { none: { kind: 'RANK', state: 'SUCCEEDED' } },
+    },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  });
+  for (const source of sources)
+    await db.$transaction(async (tx) => {
+      const claimed = await tx.sourceVideo.updateMany({
+        where: {
+          id: source.id,
+          status: 'READY',
+          jobs: { none: { kind: 'RANK', state: { in: ['PENDING', 'RUNNING', 'RETRYING'] } } },
+        },
+        data: { status: 'ANALYZING' },
+      });
+      if (!claimed.count) return;
+      await tx.jobRun.create({ data: { sourceId: source.id, kind: 'RANK' } });
+    });
+}
 async function failExhausted(db: PrismaClient, id: string, sourceId: string, kind: string) {
-  const jobLabel = kind === 'ANALYZE' ? 'analysis' : 'ingestion';
+  const jobLabel = kind === 'ANALYZE' ? 'analysis' : kind === 'RANK' ? 'ranking' : 'ingestion';
   await db.$transaction(async (tx) => {
     const changed = await tx.jobRun.updateMany({
       where: { id, state: { in: ['PENDING', 'RUNNING', 'RETRYING'] } },

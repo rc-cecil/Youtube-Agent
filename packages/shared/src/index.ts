@@ -91,6 +91,33 @@ export type GameDetectionView = {
   method: string;
   overridden: boolean;
 };
+export type DetectedEventView = {
+  eventType: string;
+  confidence: number;
+  detectorProfile: string;
+};
+export type HighlightScoreView = {
+  eventImportance: number;
+  excitement: number;
+  surprise: number;
+  skill: number;
+  humor: number;
+  tension: number;
+  emotionalReaction: number;
+  visualClarity: number;
+  contextIndependence: number;
+  hookPotential: number;
+  retentionPotential: number;
+  sharePotential: number;
+  novelty: number;
+  editability: number;
+  confidence: number;
+  highlightScore: number;
+  reason: string;
+  provider: string;
+  model: string;
+  cached: boolean;
+};
 export type CandidateView = {
   id: string;
   startTime: number;
@@ -99,6 +126,15 @@ export type CandidateView = {
   eventType: string;
   signalScore: number;
   reason: string;
+  score?: HighlightScoreView | null;
+  detectedEvent?: DetectedEventView | null;
+};
+export type AiUsageView = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCostUsd: string | number;
+  mode: 'mock' | 'openai';
 };
 export type SourceView = {
   id: string;

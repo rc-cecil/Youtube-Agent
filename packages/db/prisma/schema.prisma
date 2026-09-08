@@ -100,6 +100,8 @@ model SourceVideo {
   analysis VideoAnalysis?
   gameDetection GameDetection?
   candidates HighlightCandidate[]
+  detectedEvents DetectedEvent[]
+  aiCache AiResultCache[]
   @@index([userId, createdAt])
   @@index([userId, sha256])
 }
@@ -160,8 +162,72 @@ model HighlightCandidate {
   reason String
   signals Json
   createdAt DateTime @default(now())
+  score HighlightScore?
+  detectedEvent DetectedEvent?
   @@index([sourceId, signalScore])
   @@index([analysisId, eventTime])
+}
+model DetectedEvent {
+  id String @id @default(uuid())
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  candidateId String @unique
+  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  eventType String
+  confidence Int
+  detectorProfile String
+  evidence Json
+  createdAt DateTime @default(now())
+  @@index([sourceId, eventType])
+}
+model HighlightScore {
+  id String @id @default(uuid())
+  candidateId String @unique
+  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  eventImportance Int
+  excitement Int
+  surprise Int
+  skill Int
+  humor Int
+  tension Int
+  emotionalReaction Int
+  visualClarity Int
+  contextIndependence Int
+  hookPotential Int
+  retentionPotential Int
+  sharePotential Int
+  novelty Int
+  editability Int
+  confidence Int
+  highlightScore Int
+  reason String
+  provider String
+  model String
+  promptVersion String
+  inputHash String
+  cached Boolean @default(false)
+  inputTokens Int?
+  outputTokens Int?
+  estimatedCostUsd Decimal? @db.Decimal(12, 6)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([highlightScore])
+}
+model AiResultCache {
+  id String @id @default(uuid())
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  inputHash String
+  provider String
+  model String
+  promptVersion String
+  output Json
+  inputTokens Int?
+  outputTokens Int?
+  estimatedCostUsd Decimal? @db.Decimal(12, 6)
+  createdAt DateTime @default(now())
+  @@unique([inputHash, provider, model, promptVersion])
+  @@index([sourceId, createdAt])
 }
 model VideoAsset {
   id String @id @default(uuid())

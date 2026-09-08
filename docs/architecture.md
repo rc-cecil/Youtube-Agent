@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phase 1 was completed first; the subsequent explicit instruction authorizes and completes Phase 2 only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1 and 2 were completed sequentially; the subsequent explicit instruction authorizes and completes Phase 3 only.
 
 ## 1. Existing architecture assessment
 
@@ -8,7 +8,7 @@ The repository `rc-cecil/Youtube-Agent`, at baseline `dd3ce60`, contains only a 
 
 ## 2. Directory structure
 
-Phase 1 creates `apps/web`, `apps/api`, `apps/worker`, and packages `db`, `config`, `shared`, `logger`, `storage`, `jobs`, `video-analysis`, plus `infra`, `scripts`, `tests`, and `docs`. Storage and jobs are separate packages because both API and workers need their contracts. Later phases add `apps/renderer` and packages `ai`, `game-detectors`, `remotion`, `youtube`, `analytics`, and `scheduling`; do not create pretend implementations now.
+Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`. Phase 3 adds `ai` and `game-detectors`. Later phases add `apps/renderer` and packages for Remotion, YouTube, analytics, and scheduling; do not create pretend implementations now.
 
 ## 3. Database schema plan
 
@@ -17,6 +17,8 @@ Phase 1: User owns Session, SourceVideo and UploadSession. UploadSession owns im
 Source states preserve the specification: UPLOADED → PROCESSING → ANALYZING → READY or FAILED, with ARCHIVED reserved. In Phase 2, READY means ingestion and deterministic signal analysis completed, not that a final Short exists. Store actual container, video/audio codec, duration, dimensions, frame rate, audio presence, bytes, hash, and rights acknowledgment timestamp. Audio absence is valid and visible; it must not be fabricated.
 
 Phase 2 adds one current `VideoAnalysis` per source, notable `AnalysisSignal` rows, owner-visible `HighlightCandidate` windows, and one `GameDetection` with explicit provenance and override state. `PROXY` and `THUMBNAIL` assets use deterministic generated keys. Reanalysis replaces derived signals/candidates while preserving originals and user game overrides.
+
+Phase 3 adds one `DetectedEvent` and `HighlightScore` per ranked finalist plus immutable `AiResultCache` entries keyed by owner-bound content, provider, model, and prompt version. Scores retain all 15 specified dimensions, concise evidence, provider provenance, cache state, tokens, and estimated cost. Three private frame assets are retained per finalist for reproducibility; they are never directly exposed by the API.
 
 Later migrations add: User → YouTubeConnection → Channel; SourceVideo → AnalysisJob/GameDetection/DetectedEvent → HighlightCandidate → HighlightScore/ShortConcept → versioned EditDecisionList → RenderedShort. Campaign owns unique channel/local-date/editorial-role ScheduleSlots; a slot owns publication attempts, and YouTubePublication has a unique external video ID and idempotency key. AnalyticsSnapshot and RevenueSnapshot use unique report-window/dimensions keys and retain history. PerformanceFeature, PerformanceInsight, Experiment and versioned StrategyConfig retain evidence and audit trails. Notifications reference jobs/publications. Use foreign keys, owner/channel indexes, unique deduplication constraints, UTC timestamps and explicit IANA timezone configuration. Monetary values use decimals and unavailable metrics remain null.
 
@@ -54,7 +56,7 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Stop after Phase 2. Phase 3 requires a new user instruction.**
+**Stop after Phase 3. Phase 4 requires a new user instruction.**
 
 ## 10. Known risks and decisions
 

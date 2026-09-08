@@ -9,10 +9,12 @@ import {
   reconcileJobs,
   cleanUploads,
   backfillAnalysisJobs,
+  backfillRankingJobs,
 } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 import { ingest } from './ingest.js';
 import { analyze } from './analyze.js';
+import { rankCandidates } from './rank.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -27,6 +29,7 @@ const worker = new Worker(
     const record = await db.jobRun.findUniqueOrThrow({ where: { id: String(job.data.jobId) } });
     if (record.kind === 'INGEST') return ingest(db, storage, config, record.id);
     if (record.kind === 'ANALYZE') return analyze(db, storage, config, record.id);
+    if (record.kind === 'RANK') return rankCandidates(db, storage, config, record.id);
     throw new Error(`Unsupported job kind: ${record.kind}`);
   },
   { connection, concurrency: config.WORKER_CONCURRENCY },
@@ -43,6 +46,7 @@ async function tick() {
   try {
     await db.$queryRaw`SELECT 1`;
     await backfillAnalysisJobs(db);
+    await backfillRankingJobs(db);
     await reconcileJobs(db, queue);
     if (cycles++ % 12 === 0) await cleanUploads(db, storage);
     await connection.set(HEARTBEAT, new Date().toISOString(), 'EX', 30);

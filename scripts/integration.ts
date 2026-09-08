@@ -19,6 +19,7 @@ import { hashPassword, COOKIE } from '../apps/api/src/auth.js';
 import { buildApp } from '../apps/api/src/app.js';
 import { ingest } from '../apps/worker/src/ingest.js';
 import { analyze } from '../apps/worker/src/analyze.js';
+import { rankCandidates } from '../apps/worker/src/rank.js';
 import type { UploadView, SourceView } from '../packages/shared/src/index.js';
 
 const base = getConfig();
@@ -127,7 +128,9 @@ function startWorker(overrides = config) {
       const job = await db.jobRun.findUniqueOrThrow({ where: { id: String(queued.data.jobId) } });
       return job.kind === 'ANALYZE'
         ? analyze(db, storage, overrides, job.id)
-        : ingest(db, storage, overrides, job.id);
+        : job.kind === 'RANK'
+          ? rankCandidates(db, storage, overrides, job.id)
+          : ingest(db, storage, overrides, job.id);
     },
     { connection: redis, concurrency: 2 },
   );
@@ -360,6 +363,21 @@ try {
   assert.equal(details.analysis?.status, 'SUCCEEDED');
   assert.equal(details.gameDetection?.game, 'Unknown gameplay');
   assert(details.candidates?.length);
+  const rankedCandidates = details.candidates?.filter((candidate) => candidate.score) ?? [];
+  assert.equal(
+    rankedCandidates.length,
+    Math.min(config.AI_FINALIST_LIMIT, details.candidates?.length ?? 0),
+  );
+  assert(rankedCandidates.every((candidate) => candidate.detectedEvent));
+  assert(rankedCandidates.every((candidate) => candidate.score?.provider === 'mock'));
+  assert(rankedCandidates.every((candidate) => candidate.score?.confidence === 35));
+  assert.equal(await db.aiResultCache.count({ where: { sourceId: source.id } }), 1);
+  assert.equal(
+    await db.videoAsset.count({
+      where: { sourceId: source.id, kind: { startsWith: 'ANALYSIS_FRAME_' } },
+    }),
+    Math.min(config.AI_FINALIST_LIMIT, details.candidates?.length ?? 0) * 3,
+  );
   assert(details.assets?.some((asset) => asset.kind === 'PROXY'));
   assert(details.assets?.some((asset) => asset.kind === 'THUMBNAIL'));
   const proxy = await request(owner.cookie, 'GET', `/api/sources/${source.id}/assets/proxy`),
@@ -372,7 +390,7 @@ try {
     404,
   );
   pass(
-    'proxy, thumbnail, signal analysis, generic detection and candidates are persisted securely',
+    'proxy, signals, sampled frames, event evidence and explainable rankings are persisted securely',
   );
   const override = await request(owner.cookie, 'PUT', `/api/sources/${source.id}/game`, {
     game: 'Fortnite',
@@ -384,6 +402,16 @@ try {
     (await request(other.cookie, 'PUT', `/api/sources/${source.id}/game`, { game: 'FIFA' }))
       .statusCode,
     404,
+  );
+  await reconcileJobs(db, queue);
+  await waitFor(
+    async () =>
+      (await db.sourceVideo.findUniqueOrThrow({ where: { id: source.id } })).status === 'READY',
+    'game correction reranking',
+  );
+  assert.equal(
+    (await db.gameDetection.findUniqueOrThrow({ where: { sourceId: source.id } })).detectorProfile,
+    'fortnite-v1',
   );
   pass('game correction is validated, durable, audited and account-scoped');
   const reanalysis = await Promise.all([
@@ -399,15 +427,30 @@ try {
     });
     return latest.state === 'SUCCEEDED';
   }, 'manual reanalysis');
+  await waitFor(
+    async () =>
+      (await db.sourceVideo.findUniqueOrThrow({ where: { id: source.id } })).status === 'READY',
+    'manual reranking',
+  );
   assert.equal(
     (await db.gameDetection.findUniqueOrThrow({ where: { sourceId: source.id } })).game,
     'Fortnite',
   );
   const analysisList = (await request(owner.cookie, 'GET', '/api/analysis')).json<{
     sources: SourceView[];
+    aiUsage: { calls: number };
   }>();
   assert(analysisList.sources.some((item) => item.id === source.id));
-  pass('manual reanalysis is serialized and preserves an explicit game override');
+  assert.equal(
+    analysisList.sources.find((item) => item.id === source.id)?.candidates?.[0]?.score?.provider,
+    'mock',
+  );
+  assert.equal(
+    analysisList.sources.find((item) => item.id === source.id)?.candidates?.[0]?.score?.cached,
+    true,
+  );
+  assert.equal(analysisList.aiUsage.calls, 2);
+  pass('manual reanalysis is serialized, reranked and preserves an explicit game override');
   await ingest(db, storage, config, job.id);
   assert.equal((await db.jobRun.findUniqueOrThrow({ where: { id: job.id } })).attempt, 1);
   pass('duplicate job execution is a terminal-success no-op');

@@ -12,8 +12,11 @@ import {
   extractMediaSignals,
   MediaError,
 } from '../../../packages/video-analysis/src/index.js';
-import { buildGenericCandidates } from '../../../packages/video-analysis/src/generic-detector.js';
 import { identifyGame } from '../../../packages/video-analysis/src/game-identification.js';
+import {
+  buildCandidatesWithDetector,
+  detectorForGame,
+} from '../../../packages/game-detectors/src/index.js';
 import { MAX_ATTEMPTS } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 
@@ -89,7 +92,13 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
       config,
     );
     progress = 80;
-    const candidates = buildGenericCandidates(
+    const inferredGame = identifyGame(job.source.filename),
+      effectiveGame = job.source.gameDetection?.overridden
+        ? job.source.gameDetection
+        : inferredGame,
+      detector = detectorForGame(effectiveGame.game, effectiveGame.confidence),
+      candidates = buildCandidatesWithDetector(
+        detector,
         result.signals,
         job.source.duration,
         config.ANALYSIS_CANDIDATE_LIMIT,
@@ -101,7 +110,6 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
     await storage.put(proxyKey, createReadStream(proxyPath));
     await storage.put(thumbnailKey, createReadStream(thumbnailPath));
     const [proxyInfo, thumbnailInfo] = await Promise.all([stat(proxyPath), stat(thumbnailPath)]),
-      inferredGame = identifyGame(job.source.filename),
       counts = {
         sceneCount: result.signals.filter((signal) => signal.kind === 'SCENE_CHANGE').length,
         motionPeakCount: result.signals.filter((signal) => signal.kind === 'MOTION_PEAK').length,
@@ -149,8 +157,8 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
       if (!job.source.gameDetection?.overridden)
         await tx.gameDetection.upsert({
           where: { sourceId: job.sourceId },
-          create: { sourceId: job.sourceId, ...inferredGame },
-          update: { ...inferredGame, overridden: false },
+          create: { sourceId: job.sourceId, ...inferredGame, detectorProfile: detector.profile },
+          update: { ...inferredGame, detectorProfile: detector.profile, overridden: false },
         });
       for (const asset of [
         { kind: 'PROXY', storageKey: proxyKey, bytes: BigInt(proxyInfo.size) },
@@ -161,7 +169,7 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
           create: { sourceId: job.sourceId, ...asset },
           update: { storageKey: asset.storageKey, bytes: asset.bytes },
         });
-      await tx.sourceVideo.update({ where: { id: job.sourceId }, data: { status: 'READY' } });
+      await tx.sourceVideo.update({ where: { id: job.sourceId }, data: { status: 'ANALYZING' } });
       await tx.jobRun.update({
         where: { id },
         data: {
@@ -172,6 +180,14 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
           errorMessage: null,
         },
       });
+      const activeRank = await tx.jobRun.findFirst({
+        where: {
+          sourceId: job.sourceId,
+          kind: 'RANK',
+          state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
+        },
+      });
+      if (!activeRank) await tx.jobRun.create({ data: { sourceId: job.sourceId, kind: 'RANK' } });
     });
     logger.info(
       {

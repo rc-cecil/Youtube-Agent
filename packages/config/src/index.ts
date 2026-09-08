@@ -39,6 +39,19 @@ const schema = z.object({
   ANALYSIS_FPS: z.coerce.number().min(0.25).max(4).default(1),
   ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(12),
   PROXY_MAX_WIDTH: z.coerce.number().int().min(320).max(1920).default(720),
+  AI_MODE: z.enum(['mock', 'openai']).default('mock'),
+  AI_VISION_MODEL: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
+  OPENAI_API_KEY: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
+  AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
+  AI_FINALIST_LIMIT: z.coerce.number().int().min(1).max(12).default(6),
+  AI_INPUT_USD_PER_1M: z.coerce.number().min(0).default(0),
+  AI_OUTPUT_USD_PER_1M: z.coerce.number().min(0).default(0),
   SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   TIMEZONE: z
     .string()
@@ -60,6 +73,10 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
     throw new Error('Production APP_URL must use HTTPS');
   if (config.STORAGE_PROVIDER === 's3' && !config.STORAGE_BUCKET)
     throw new Error('STORAGE_BUCKET is required for s3');
+  if (config.AI_MODE === 'openai' && (!config.OPENAI_API_KEY || !config.AI_VISION_MODEL))
+    throw new Error('OPENAI_API_KEY and AI_VISION_MODEL are required when AI_MODE=openai');
+  if (config.NODE_ENV === 'production' && config.AI_MODE !== 'openai')
+    throw new Error('Production AI_MODE must be openai; mock ranking is development-only');
   return { ...config, STORAGE_ROOT: resolve(config.STORAGE_ROOT) };
 }
 export const getConfig = () => parseConfig(process.env);

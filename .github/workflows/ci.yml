@@ -1,7 +1,7 @@
-name: Phase 1 checks
+name: Phase 3 checks
 on: [push, pull_request]
 jobs:
-  foundation:
+  verification:
     runs-on: ubuntu-latest
     services:
       postgres:

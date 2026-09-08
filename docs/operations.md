@@ -1,18 +1,18 @@
-# Phase 2 operations
+# Phase 3 operations
 
 ## Runtime ownership
 
 - API owns sessions, owner-filtered reads, bounded chunk receipt, and streaming finalization.
 - PostgreSQL owns durable source/job/session state. A source and PENDING job commit together.
 - Redis/BullMQ delivers jobs using JobRun IDs; the worker reconstructs missing queue entries.
-- Worker owns FFmpeg/ffprobe, ingestion, proxy/signal analysis, retries, progress, heartbeat, upload cleanup, and expiration.
+- Worker owns FFmpeg/ffprobe, ingestion, proxy/signal analysis, game adapters, sampled-frame ranking, retries, progress, heartbeat, upload cleanup, and expiration.
 - Local storage holds originals/parts; S3/R2 uses the same contract. Local multi-process deployment needs a shared volume.
 
 BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idempotent work](https://docs.bullmq.io/patterns/idempotent-jobs), and [retry/backoff behavior](https://docs.bullmq.io/guide/retrying-failing-jobs) inform delivery. PostgreSQL retains terminal state after queue retention expires, so replaying a completed job is a no-op.
 
 ## Environment reference
 
-| Variable                                               | Phase 1 meaning                                 |
+| Variable                                               | Meaning                                         |
 | ------------------------------------------------------ | ----------------------------------------------- |
 | `DATABASE_URL`                                         | Required PostgreSQL URL; never browser-exposed  |
 | `REDIS_URL`                                            | Required Redis URL                              |
@@ -33,12 +33,18 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `ANALYSIS_FPS`                                         | Grayscale activity samples/sec, default one     |
 | `ANALYSIS_CANDIDATE_LIMIT`                             | Maximum generic windows/source, default 12      |
 | `PROXY_MAX_WIDTH`                                      | Review proxy maximum width, default 720         |
+| `AI_MODE`                                              | `mock` (default) or `openai` ranking provider   |
+| `AI_FINALIST_LIMIT`                                    | Candidates sampled per source, default six      |
+| `AI_TIMEOUT_MS`                                        | Ranking request timeout, default 120 seconds    |
+| `OPENAI_API_KEY`                                       | Required server secret for `AI_MODE=openai`     |
+| `AI_VISION_MODEL`                                      | Required model name for `AI_MODE=openai`        |
+| `AI_INPUT_USD_PER_1M`, `AI_OUTPUT_USD_PER_1M`          | Optional explicit cost-estimate rates           |
 | `SESSION_HOURS`                                        | Session lifetime, default 24 hours              |
 | `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
 | `LOG_LEVEL`                                            | Structured log level                            |
 | `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
 
-Reserved later-phase variables in `.env.example` include OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
+Reserved later-phase variables in `.env.example` include the other OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
 
 ## Recovery
 
@@ -51,6 +57,12 @@ Reserved later-phase variables in `.env.example` include OpenAI model categories
 **FFmpeg or storage unavailable:** retryable failures create FailureEvents and RETRYING state with exponential backoff. After three attempts, the source fails. Correct configuration and use Retry processing; the API restarts the failed stage.
 
 **Analysis recovery:** ingestion commits a separate PENDING analysis intent and moves the source to ANALYZING. Reconciliation also backfills previously validated Phase 1 sources. Reanalysis is serialized, replaces derived signals/candidates, and preserves a user-corrected game. Deterministic proxy keys make storage retries idempotent.
+
+**Ranking recovery:** successful local analysis commits a separate PENDING `RANK` intent and stays ANALYZING until ranking succeeds. Reconciliation backfills Phase 2 analyses that never received a successful rank. Ranking samples only the configured finalists, validates strict structured output, and persists event evidence and all score dimensions atomically before READY. A failed rank retries only ranking, not ingestion or signal extraction. Manual game correction schedules a fresh rank with the selected adapter.
+
+**AI modes and cost:** `mock` is an explicitly labeled deterministic development/test fixture and performs no network calls or visual event claims. Production rejects mock mode. `openai` sends low-detail finalist frames to the Responses API with `store:false`, a pseudonymous safety identifier, and strict JSON-schema output. Never expose the API key to the browser. Cached results are owner-bound and include source/frame hashes, detector profile, provider, model, and prompt version. Estimated cost remains zero/unavailable until deployment supplies the per-million-token rates for its chosen model; those rates are configuration, not live pricing lookup.
+
+**OpenAI failure:** 429 and 5xx responses are retryable within the normal three-attempt bound. Authentication, model-access, and other rejected requests fail immediately with a safe message. Correct `OPENAI_API_KEY`/`AI_VISION_MODEL`, then use Retry processing. A provider response that violates the score schema is rejected rather than partially persisted.
 
 **Invalid media:** deterministic failures stop after one attempt. Re-export and upload again. Supported video codecs are H.264, HEVC, VP8/9, AV1, MPEG-4, and ProRes. Dimensions are 16–8192 pixels, frame rate >0–240 fps, duration >0–24 hours. Audio is optional. Originals remain available to their owner.
 

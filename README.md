@@ -1,17 +1,19 @@
 # AI Gameplay Shorts Agent
 
-A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–2 are implemented: foundation, ingestion, and deterministic gameplay analysis.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
+A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–3 are implemented: foundation, ingestion, deterministic gameplay analysis, game-specific adapters, and explainable AI candidate ranking.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
 
 ## What works now
 
 - React/TypeScript dashboard, uploads, searchable source library, analysis workspace, source details, job queue, system health and configuration view.
 - Provisioned user accounts, salted password hashing, expiring database sessions, HttpOnly cookies, origin checks, rate limiting and per-owner access control.
 - Resumable MP4/MOV/WebM uploads with configurable size limits, immutable hashed parts, rights acknowledgment, idempotent finalization and cleanup.
-- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion and analysis jobs with durable dispatch, bounded retries, progress and failure history.
+- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion, analysis, and ranking jobs with durable dispatch, bounded retries, progress and failure history.
 - Original-file storage through local and S3/R2 adapters, ffprobe metadata extraction and full FFmpeg decode validation in a separate worker.
-- Bounded H.264/AAC review proxies and thumbnails, streamed scene/motion/audio analysis, silence detection, generic candidate windows, conservative filename game identification, and audited game overrides.
+- Bounded H.264/AAC review proxies and thumbnails, streamed scene/motion/audio analysis, silence detection, and candidate windows with setup/payoff context.
+- FC, GTA, Call of Duty, and Fortnite signal adapters with a low-confidence generic fallback; sampled finalist frames; schema-validated 15-dimension highlight scores; audited game overrides that trigger reranking.
+- A pluggable ranking provider: explicitly labeled deterministic mock mode by default, or live OpenAI multimodal analysis when credentials and a model are configured. Content hashes cache unchanged results; token usage and configurable cost estimates are persisted and shown.
 
-**READY means ingestion and Phase 2 signal analysis completed.** Candidate scores describe local activity only; they do not claim a kill, goal, or other semantic event and are not final highlight ranks. Game-specific adapters and AI ranking are Phase 3. Remotion, YouTube, scheduling, analytics, and learning remain later phases. Phase 2 makes no OpenAI or YouTube calls and needs no credentials for them.
+**READY means ingestion, local signal analysis, and Phase 3 ranking completed.** Mock mode is a development fixture: it scores measured activity and never pretends to have understood frame content. Set `AI_MODE=openai`, `OPENAI_API_KEY`, and `AI_VISION_MODEL` for live visual interpretation. Remotion, YouTube, scheduling, analytics, and learning remain later phases.
 
 ## Quick start with Docker
 
@@ -51,7 +53,7 @@ npm run user:create
 npm run dev
 ```
 
-Copy `.env.example` first. `user:create` reads the account values described above. Open **http://localhost:5173** (use that hostname to match `APP_URL`; if you use `127.0.0.1`, change `APP_URL` too). The Vite proxy keeps browser requests same-origin.
+Copy `.env.example` first. `user:create` reads the account values described above. Open **http://localhost:5173** (use that hostname to match `APP_URL`; if you use `127.0.0.1`, change `APP_URL` too). The Vite proxy keeps browser requests same-origin. The default `AI_MODE=mock` needs no external credentials. For live ranking, configure the three OpenAI variables above; optional per-million-token price variables make the displayed cost an explicit estimate rather than an invented value.
 
 Run services individually with `npm run dev:api`, `npm run dev:worker`, and `npm run dev:web`. The API defaults to `127.0.0.1:3001`. If its port changes, set `API_PROXY_TARGET` when starting Vite. Use `npm run db:dev -- --name change_name` to create a development migration; `db:migrate` applies committed migrations.
 
@@ -80,7 +82,7 @@ npm run test:integration
 Remove-Item Env:DATABASE_URL
 ```
 
-GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux. See [Phase 2 verification](docs/phase-2-verification.md) for actual local results and remaining environment-specific checks. There is no Remotion Studio command yet; compositions and render tests are Phase 4.
+GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux. See [Phase 3 verification](docs/phase-3-verification.md) for actual local results and remaining environment-specific checks. There is no Remotion Studio command yet; compositions and render tests are Phase 4.
 
 ## Production build and deployment boundary
 
@@ -90,8 +92,8 @@ npm run start:api
 npm run start:worker
 ```
 
-Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is the supplied example. Set `NODE_ENV=production`, an HTTPS `APP_URL`, real database/storage credentials and TLS at ingress. Production configuration rejects HTTP origins and uses Secure cookies. Keep PostgreSQL and Redis private. Backend secrets are never sent to the frontend.
+Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is the supplied example. Set `NODE_ENV=production`, an HTTPS `APP_URL`, real database/storage credentials, `AI_MODE=openai`, an OpenAI API key/model, and TLS at ingress. Production configuration rejects HTTP origins and development mock ranking, and uses Secure cookies. Keep PostgreSQL and Redis private. Backend secrets are never sent to the frontend.
 
 The Compose file is a local development environment, not an internet deployment. Resource quotas, backups, alerts, infrastructure secrets and the target S3 bucket must be provisioned before exposure. The container build is supplied but could not be executed here because Docker is unavailable; native production outputs were built and checked.
 
-See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-2-verification.md). Implementation intentionally stops at Phase 2.
+See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-3-verification.md). Implementation intentionally stops at Phase 3.

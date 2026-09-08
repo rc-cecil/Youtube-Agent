@@ -10,6 +10,7 @@ import type { Storage } from '../../../packages/storage/src/index.js';
 import { AppError, loginInput, sourceStates } from '../../../packages/shared/src/index.js';
 import { HEARTBEAT } from '../../../packages/jobs/src/index.js';
 import { supportedGames } from '../../../packages/video-analysis/src/game-identification.js';
+import { detectorForGame } from '../../../packages/game-detectors/src/index.js';
 import {
   authentication,
   COOKIE,
@@ -120,8 +121,11 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 2,
+    phase: 3,
     storage: config.STORAGE_PROVIDER,
+    aiMode: config.AI_MODE,
+    aiModel:
+      config.AI_MODE === 'openai' ? config.AI_VISION_MODEL : 'deterministic-ranking-fixture-v1',
   }));
   app.post('/api/uploads', { preHandler: requireAuth }, async (req, reply) => {
     const upload = await uploads.create(req.userId, req.body);
@@ -209,7 +213,10 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
           jobs: { orderBy: { createdAt: 'desc' }, include: { failures: true } },
           analysis: true,
           gameDetection: true,
-          candidates: { orderBy: [{ signalScore: 'desc' }, { eventTime: 'asc' }] },
+          candidates: {
+            orderBy: [{ signalScore: 'desc' }, { eventTime: 'asc' }],
+            include: { score: true, detectedEvent: true },
+          },
           assets: { select: { kind: true, bytes: true } },
         },
       });
@@ -248,19 +255,49 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       return reply.send(await storage.read(asset.storageKey));
     },
   );
-  app.get('/api/analysis', { preHandler: requireAuth }, async (req) => ({
-    sources: await db.sourceVideo.findMany({
-      where: { userId: req.userId, analysis: { is: { status: 'SUCCEEDED' } } },
-      orderBy: { updatedAt: 'desc' },
-      take: 100,
-      include: {
-        analysis: true,
-        gameDetection: true,
-        candidates: { orderBy: [{ signalScore: 'desc' }, { eventTime: 'asc' }], take: 3 },
-        jobs: { where: { kind: 'ANALYZE' }, orderBy: { createdAt: 'desc' }, take: 1 },
+  app.get('/api/analysis', { preHandler: requireAuth }, async (req) => {
+    const [sources, usage, calls] = await Promise.all([
+      db.sourceVideo.findMany({
+        where: { userId: req.userId, analysis: { is: { status: 'SUCCEEDED' } } },
+        orderBy: { updatedAt: 'desc' },
+        take: 100,
+        include: {
+          analysis: true,
+          gameDetection: true,
+          candidates: {
+            where: { score: { isNot: null } },
+            orderBy: [
+              { score: { highlightScore: 'desc' } },
+              { signalScore: 'desc' },
+              { eventTime: 'asc' },
+            ],
+            include: { score: true, detectedEvent: true },
+            take: 3,
+          },
+          jobs: {
+            where: { kind: { in: ['ANALYZE', 'RANK'] } },
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+          },
+        },
+      }),
+      db.aiResultCache.aggregate({
+        where: { source: { userId: req.userId } },
+        _sum: { inputTokens: true, outputTokens: true, estimatedCostUsd: true },
+      }),
+      db.aiResultCache.count({ where: { source: { userId: req.userId } } }),
+    ]);
+    return {
+      sources,
+      aiUsage: {
+        calls,
+        inputTokens: usage._sum.inputTokens ?? 0,
+        outputTokens: usage._sum.outputTokens ?? 0,
+        estimatedCostUsd: usage._sum.estimatedCostUsd ?? 0,
+        mode: config.AI_MODE,
       },
-    }),
-  }));
+    };
+  });
   app.post<{ Params: { id: string } }>(
     '/api/sources/:id/analyze',
     { preHandler: requireAuth },
@@ -276,7 +313,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
         const active = await tx.jobRun.findFirst({
           where: {
             sourceId: source.id,
-            kind: 'ANALYZE',
+            kind: { in: ['ANALYZE', 'RANK'] },
             state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
           },
         });
@@ -295,18 +332,21 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     { preHandler: requireAuth },
     async (req) => {
       const input = z.object({ game: z.enum(supportedGames) }).parse(req.body);
-      const source = await db.sourceVideo.findFirst({
-        where: { id: req.params.id, userId: req.userId },
-      });
-      if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
       return db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
+        const source = await tx.sourceVideo.findFirst({
+          where: { id: req.params.id, userId: req.userId },
+          include: { analysis: true },
+        });
+        if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
+        const detectorProfile = detectorForGame(input.game, 1).profile;
         const detection = await tx.gameDetection.upsert({
           where: { sourceId: source.id },
           create: {
             sourceId: source.id,
             game: input.game,
             confidence: 1,
-            detectorProfile: 'generic-gameplay-v1',
+            detectorProfile,
             method: 'USER_OVERRIDE',
             evidence: { userOverride: true },
             overridden: true,
@@ -315,7 +355,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
             game: input.game,
             edition: null,
             confidence: 1,
-            detectorProfile: 'generic-gameplay-v1',
+            detectorProfile,
             method: 'USER_OVERRIDE',
             evidence: { userOverride: true },
             overridden: true,
@@ -324,6 +364,22 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
         await tx.auditLog.create({
           data: { userId: req.userId, action: 'GAME_OVERRIDDEN', resourceId: source.id },
         });
+        if (source.analysis?.status === 'SUCCEEDED') {
+          const active = await tx.jobRun.findFirst({
+            where: {
+              sourceId: source.id,
+              kind: 'RANK',
+              state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
+            },
+          });
+          if (!active) {
+            await tx.sourceVideo.update({
+              where: { id: source.id },
+              data: { status: 'ANALYZING' },
+            });
+            await tx.jobRun.create({ data: { sourceId: source.id, kind: 'RANK' } });
+          }
+        }
         return detection;
       });
     },
@@ -344,10 +400,15 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
           where: { sourceId: source.id, state: 'FAILED' },
           orderBy: { createdAt: 'desc' },
         });
-        const kind = failed?.kind === 'ANALYZE' && source.duration ? 'ANALYZE' : 'INGEST';
+        const kind =
+          failed?.kind === 'RANK' && source.duration
+            ? 'RANK'
+            : failed?.kind === 'ANALYZE' && source.duration
+              ? 'ANALYZE'
+              : 'INGEST';
         await tx.sourceVideo.update({
           where: { id: source.id },
-          data: { status: kind === 'ANALYZE' ? 'ANALYZING' : 'UPLOADED' },
+          data: { status: kind === 'INGEST' ? 'UPLOADED' : 'ANALYZING' },
         });
         await tx.auditLog.create({
           data: { userId: req.userId, action: `${kind}_RETRIED`, resourceId: source.id },
@@ -367,21 +428,27 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
   }));
   app.get('/api/dashboard', { preHandler: requireAuth }, async (req) => {
     const where = { userId: req.userId };
-    const [total, ready, failed, processing, aggregate, recent] = await Promise.all([
-      db.sourceVideo.count({ where }),
-      db.sourceVideo.count({ where: { ...where, status: 'READY' } }),
-      db.sourceVideo.count({ where: { ...where, status: 'FAILED' } }),
-      db.sourceVideo.count({
-        where: { ...where, status: { in: ['UPLOADED', 'PROCESSING', 'ANALYZING'] } },
-      }),
-      db.sourceVideo.aggregate({ where, _sum: { bytes: true, duration: true } }),
-      db.sourceVideo.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        take: 5,
-        include: { jobs: { orderBy: { createdAt: 'desc' }, take: 1 } },
-      }),
-    ]);
+    const [total, ready, failed, processing, aggregate, recent, aiUsage, aiCalls] =
+      await Promise.all([
+        db.sourceVideo.count({ where }),
+        db.sourceVideo.count({ where: { ...where, status: 'READY' } }),
+        db.sourceVideo.count({ where: { ...where, status: 'FAILED' } }),
+        db.sourceVideo.count({
+          where: { ...where, status: { in: ['UPLOADED', 'PROCESSING', 'ANALYZING'] } },
+        }),
+        db.sourceVideo.aggregate({ where, _sum: { bytes: true, duration: true } }),
+        db.sourceVideo.findMany({
+          where,
+          orderBy: { createdAt: 'desc' },
+          take: 5,
+          include: { jobs: { orderBy: { createdAt: 'desc' }, take: 1 } },
+        }),
+        db.aiResultCache.aggregate({
+          where: { source: { userId: req.userId } },
+          _sum: { inputTokens: true, outputTokens: true, estimatedCostUsd: true },
+        }),
+        db.aiResultCache.count({ where: { source: { userId: req.userId } } }),
+      ]);
     return {
       total,
       ready,
@@ -390,6 +457,13 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       bytes: aggregate._sum.bytes ?? 0n,
       duration: aggregate._sum.duration ?? 0,
       recent,
+      aiUsage: {
+        calls: aiCalls,
+        inputTokens: aiUsage._sum.inputTokens ?? 0,
+        outputTokens: aiUsage._sum.outputTokens ?? 0,
+        estimatedCostUsd: aiUsage._sum.estimatedCostUsd ?? 0,
+        mode: config.AI_MODE,
+      },
     };
   });
   app.get('/api/health', { preHandler: requireAuth }, async (_req, reply) => {
@@ -416,7 +490,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       status: healthy ? 'healthy' : 'degraded',
       services: { database, redis: redisStatus, storage: storageStatus, worker },
       heartbeat,
-      phase: 2,
+      phase: 3,
     };
   });
   return app;

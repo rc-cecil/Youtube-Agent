@@ -33,8 +33,15 @@ import {
   ScanSearch,
   Gamepad2,
   Play,
+  Sparkles,
 } from 'lucide-react';
-import type { SourceView, JobView, UploadView } from '../../../packages/shared/src/index.js';
+import type {
+  AiUsageView,
+  HighlightScoreView,
+  SourceView,
+  JobView,
+  UploadView,
+} from '../../../packages/shared/src/index.js';
 import { api, post } from './api.js';
 import { DashboardHero } from '@/components/dashboard-hero';
 import { FuturePreview } from '@/components/future-preview';
@@ -70,6 +77,29 @@ const duration = (value: number | null) =>
   value === null
     ? 'Pending'
     : `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+const eventLabel = (value: string) =>
+  friendly[value] ??
+  value
+    .toLowerCase()
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+const scoreDimensions: Array<[keyof HighlightScoreView, string]> = [
+  ['eventImportance', 'Importance'],
+  ['excitement', 'Excitement'],
+  ['surprise', 'Surprise'],
+  ['skill', 'Skill'],
+  ['humor', 'Humor'],
+  ['tension', 'Tension'],
+  ['emotionalReaction', 'Reaction'],
+  ['visualClarity', 'Clarity'],
+  ['contextIndependence', 'Standalone'],
+  ['hookPotential', 'Hook'],
+  ['retentionPotential', 'Retention'],
+  ['sharePotential', 'Shareability'],
+  ['novelty', 'Novelty'],
+  ['editability', 'Editability'],
+  ['confidence', 'Confidence'],
+];
 const friendly: Record<string, string> = {
   READY: 'Ready',
   UPLOADED: 'Queued',
@@ -204,6 +234,7 @@ function Dashboard() {
     bytes: string;
     duration: number;
     recent: SourceView[];
+    aiUsage: AiUsageView;
   }>('/dashboard');
   return (
     <>
@@ -251,6 +282,21 @@ function Dashboard() {
           );
         })}
       </div>
+      {data && (
+        <section className="ai-usage-strip" aria-label="AI ranking usage">
+          <Sparkles size={17} aria-hidden="true" />
+          <div>
+            <strong>
+              {data.aiUsage.mode === 'openai' ? 'OpenAI ranking' : 'Development mock ranking'}
+            </strong>
+            <span>
+              {data.aiUsage.calls} cached analysis {data.aiUsage.calls === 1 ? 'result' : 'results'}{' '}
+              · {data.aiUsage.inputTokens + data.aiUsage.outputTokens} tokens · estimated $
+              {Number(data.aiUsage.estimatedCostUsd).toFixed(4)}
+            </span>
+          </div>
+        </section>
+      )}
       <div className="dashboard-grid">
         <section className="panel">
           <div className="panel-heading">
@@ -811,29 +857,56 @@ function SourceDetail() {
             <section className="panel">
               <div className="panel-heading">
                 <h2>Candidate moments</h2>
-                <span className="muted">Signal score, not final AI rank</span>
+                <span className="muted">Ranked finalists include 15 explainable dimensions</span>
               </div>
               {data.candidates.length ? (
                 <div className="candidate-list">
-                  {data.candidates.map((candidate) => (
-                    <div className="candidate-row" key={candidate.id}>
-                      <span className="candidate-play">
-                        <Play size={16} />
-                      </span>
-                      <div>
-                        <strong>
-                          {friendly[candidate.eventType] ??
-                            candidate.eventType.toLowerCase().replaceAll('_', ' ')}
-                        </strong>
-                        <small>
-                          {duration(candidate.startTime)}–{duration(candidate.endTime)} · event at{' '}
-                          {duration(candidate.eventTime)}
-                        </small>
-                        <p>{candidate.reason}</p>
+                  {[...data.candidates]
+                    .sort(
+                      (a, b) =>
+                        (b.score?.highlightScore ?? -1) - (a.score?.highlightScore ?? -1) ||
+                        b.signalScore - a.signalScore,
+                    )
+                    .map((candidate) => (
+                      <div className="candidate-row" key={candidate.id}>
+                        <span className="candidate-play">
+                          <Play size={16} />
+                        </span>
+                        <div>
+                          <strong>{eventLabel(candidate.eventType)}</strong>
+                          <small>
+                            {duration(candidate.startTime)}–{duration(candidate.endTime)} · event at{' '}
+                            {duration(candidate.eventTime)}
+                          </small>
+                          <p>{candidate.score?.reason ?? candidate.reason}</p>
+                          {candidate.score && (
+                            <details className="score-details">
+                              <summary>
+                                Score breakdown ·{' '}
+                                {candidate.score.provider === 'openai'
+                                  ? candidate.score.model
+                                  : 'mock fixture'}
+                                {candidate.score.cached ? ' · cached' : ''}
+                              </summary>
+                              <div className="score-grid">
+                                {scoreDimensions.map(([key, label]) => (
+                                  <span key={key}>
+                                    <small>{label}</small>
+                                    <strong>{candidate.score?.[key]}</strong>
+                                  </span>
+                                ))}
+                              </div>
+                            </details>
+                          )}
+                        </div>
+                        <span
+                          className={`signal-score ${candidate.score ? 'rank-score' : ''}`}
+                          title={candidate.score ? 'AI highlight score' : 'Local signal score'}
+                        >
+                          {candidate.score?.highlightScore ?? candidate.signalScore}
+                        </span>
                       </div>
-                      <span className="signal-score">{candidate.signalScore}</span>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               ) : (
                 <p className="muted pad">No distinct activity windows were found.</p>
@@ -847,9 +920,9 @@ function SourceDetail() {
             <JobRows jobs={data.jobs} />
           </section>
           <p className="phase-note">
-            Phase 2 candidates come from local scene, motion, and audio signals. Game-specific event
-            adapters and AI ranking begin in Phase 3; no kill, goal, or semantic event is inferred
-            yet.
+            Phase 3 first finds activity locally, then samples only finalist frames for game-aware
+            event interpretation and ranking. Mock mode is explicitly labeled and makes no visual
+            gameplay claims; configure OpenAI mode for live multimodal interpretation.
           </p>
         </>
       )}
@@ -865,7 +938,11 @@ function JobRows({ jobs }: { jobs: JobView[] }) {
             <div>
               <strong>
                 {job.source?.filename ??
-                  (job.kind === 'ANALYZE' ? 'Gameplay analysis' : 'Media validation')}
+                  (job.kind === 'ANALYZE'
+                    ? 'Gameplay analysis'
+                    : job.kind === 'RANK'
+                      ? 'AI candidate ranking'
+                      : 'Media validation')}
               </strong>
               <small>
                 Attempt {job.attempt} · {new Date(job.createdAt).toLocaleString()}
@@ -910,15 +987,32 @@ function QueuePage() {
   );
 }
 function AnalysisPage() {
-  const { data, error } = useData<{ sources: SourceView[] }>('/analysis');
+  const { data, error } = useData<{ sources: SourceView[]; aiUsage: AiUsageView }>('/analysis');
   return (
     <>
       <PageTitle
         eyebrow="MOMENT DISCOVERY"
         title="Gameplay analysis"
-        description="Review real activity signals and candidate windows before Phase 3 ranking."
+        description="Review game-aware events and explainable highlight rankings."
       />
       <ErrorBox message={error} />
+      {data && (
+        <section className="ai-usage-strip analysis-usage" aria-label="AI analysis usage">
+          <Sparkles size={17} aria-hidden="true" />
+          <div>
+            <strong>
+              {data.aiUsage.mode === 'openai'
+                ? 'Live multimodal analysis'
+                : 'Deterministic development mode'}
+            </strong>
+            <span>
+              {data.aiUsage.calls} cached calls · {data.aiUsage.inputTokens} input /{' '}
+              {data.aiUsage.outputTokens} output tokens · estimated $
+              {Number(data.aiUsage.estimatedCostUsd).toFixed(4)}
+            </span>
+          </div>
+        </section>
+      )}
       <section className="panel">
         <div className="panel-heading">
           <h2>Analyzed recordings</h2>
@@ -935,7 +1029,10 @@ function AnalysisPage() {
                     <Gamepad2 size={14} /> {source.gameDetection?.game ?? 'Detection pending'}
                   </small>
                 </div>
-                <span>{source.candidates?.length ?? 0} top candidates</span>
+                <span>
+                  {source.candidates?.filter((candidate) => candidate.score).length ?? 0} ranked
+                  finalists
+                </span>
                 <Badge state={source.status} />
                 <ChevronRight size={18} />
               </Link>
@@ -951,7 +1048,8 @@ function AnalysisPage() {
         )}
       </section>
       <p className="phase-note">
-        Candidate counts here are deterministic signal windows, not claims about gameplay events.
+        Rankings use bounded finalist sampling. Scores show editorial potential, not guaranteed
+        performance; development mock results are labeled and remain non-semantic.
       </p>
     </>
   );
@@ -1024,7 +1122,8 @@ function HealthPage() {
         {data?.heartbeat ? new Date(data.heartbeat).toLocaleString() : 'Not available'}
       </p>
       <p className="phase-note">
-        AI ranking, rendering, YouTube, and scheduling services are not part of Phase 2.
+        Phase 3 AI ranking runs inside the existing worker. Rendering, YouTube, and scheduling
+        services arrive in later phases.
       </p>
     </>
   );
@@ -1035,6 +1134,8 @@ function SettingsPage({ user }: { user: User }) {
     maxUploadBytes: number;
     chunkBytes: number;
     storage: string;
+    aiMode: 'mock' | 'openai';
+    aiModel: string;
   }>('/config');
   return (
     <>
@@ -1051,6 +1152,8 @@ function SettingsPage({ user }: { user: User }) {
           ['Storage', data?.storage],
           ['Maximum recording size', data ? bytes(data.maxUploadBytes) : '…'],
           ['Upload chunk size', data ? bytes(data.chunkBytes) : '…'],
+          ['AI ranking mode', data?.aiMode === 'openai' ? 'OpenAI multimodal' : 'Development mock'],
+          ['AI ranking model', data?.aiModel],
         ].map(([k, v]) => (
           <div key={k}>
             <small>{k}</small>
@@ -1265,7 +1368,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 2</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 3</span>
           </footer>
         </main>
       </div>

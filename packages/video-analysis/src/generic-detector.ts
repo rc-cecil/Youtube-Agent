@@ -1,7 +1,7 @@
 import type { AnalysisSignal } from './index.js';
 
 export type DetectorEvent = {
-  type: 'ACTIVITY_BURST' | 'AUDIO_REACTION' | 'SCENE_TRANSITION';
+  type: string;
   timestamp: number;
   signals: AnalysisSignal[];
 };
@@ -10,7 +10,7 @@ export type Candidate = {
   startTime: number;
   eventTime: number;
   endTime: number;
-  eventType: DetectorEvent['type'];
+  eventType: string;
   signalScore: number;
   reason: string;
   signals: AnalysisSignal[];
