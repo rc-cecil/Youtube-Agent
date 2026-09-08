@@ -30,6 +30,9 @@ import {
   X,
   ArrowLeft,
   CircleHelp,
+  ScanSearch,
+  Gamepad2,
+  Play,
 } from 'lucide-react';
 import type { SourceView, JobView, UploadView } from '../../../packages/shared/src/index.js';
 import { api, post } from './api.js';
@@ -68,9 +71,10 @@ const duration = (value: number | null) =>
     ? 'Pending'
     : `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
 const friendly: Record<string, string> = {
-  READY: 'Ingested',
+  READY: 'Ready',
   UPLOADED: 'Queued',
   PROCESSING: 'Validating',
+  ANALYZING: 'Analyzing',
   SUCCEEDED: 'Completed',
   FAILED: 'Failed',
   PENDING: 'Pending',
@@ -218,7 +222,7 @@ function Dashboard() {
       <div className="stats">
         {[
           ['Source recordings', data?.total, FolderOpen],
-          ['Ingestion complete', data?.ready, ShieldCheck],
+          ['Analysis ready', data?.ready, ShieldCheck],
           ['In progress', data?.processing, Clock3],
           ['Needs attention', data?.failed, Activity],
         ].map(([label, value, Icon]) => {
@@ -233,12 +237,12 @@ function Dashboard() {
                 {value === undefined ? <Skeleton className="h-9 w-12" /> : String(value)}
               </strong>
               <small>
-                {label === 'Ingestion complete'
-                  ? 'Validated and stored'
+                {label === 'Analysis ready'
+                  ? 'Analyzed and ready to review'
                   : label === 'Needs attention'
-                    ? 'Failed ingestion jobs'
+                    ? 'Failed processing jobs'
                     : label === 'In progress'
-                      ? 'Queued or validating'
+                      ? 'Queued, validating, or analyzing'
                       : data
                         ? `${bytes(data.bytes)} of original footage`
                         : 'Loading your library'}
@@ -278,7 +282,7 @@ function Dashboard() {
           {[
             ['01', 'Upload your gameplay', 'MP4, MOV, or WebM. Resume interrupted uploads.'],
             ['02', 'Validate the recording', 'Check format, resolution, audio and file integrity.'],
-            ['03', 'Build your source library', 'Keep your originals and see processing status.'],
+            ['03', 'Find candidate moments', 'Measure scene, motion, and audio activity.'],
           ].map(([n, t, d]) => (
             <div className="step" key={n}>
               <span>{n}</span>
@@ -366,7 +370,7 @@ function Uploads() {
       setStage('Finalizing upload…');
       const source = await post<SourceView>(`/uploads/${upload.id}/complete`);
       setSourceId(source.id);
-      setStage('Upload complete. Ingestion is queued.');
+      setStage('Upload complete. Processing is queued.');
       setResumeId(null);
       setFile(null);
       setRights(false);
@@ -570,7 +574,7 @@ function Library() {
           }}
         >
           <option value="">All statuses</option>
-          {['UPLOADED', 'PROCESSING', 'READY', 'FAILED'].map((s) => (
+          {['UPLOADED', 'PROCESSING', 'ANALYZING', 'READY', 'FAILED'].map((s) => (
             <option key={s} value={s}>
               {friendly[s]}
             </option>
@@ -622,10 +626,37 @@ function SourceDetail() {
   const { data, error, refresh } = useData<SourceView>(`/sources/${id}`);
   const [actionError, setActionError] = useState(''),
     [busy, setBusy] = useState(false);
+  const [game, setGame] = useState('');
   async function retry() {
     setBusy(true);
     try {
       await post(`/sources/${id}/retry`);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function analyzeAgain() {
+    setBusy(true);
+    setActionError('');
+    try {
+      await post(`/sources/${id}/analyze`);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveGame() {
+    if (!game) return;
+    setBusy(true);
+    setActionError('');
+    try {
+      await api(`/sources/${id}/game`, { method: 'PUT', body: JSON.stringify({ game }) });
+      setGame('');
       await refresh();
     } catch (e) {
       setActionError(errorText(e));
@@ -641,7 +672,7 @@ function SourceDetail() {
       <PageTitle
         eyebrow="RECORDING DETAILS"
         title={data?.filename ?? 'Recording'}
-        description="Original media and validation history."
+        description="Original media, analysis signals, and candidate moments."
       />
       <ErrorBox message={error || actionError} />
       {data && (
@@ -659,7 +690,16 @@ function SourceDetail() {
                   void retry();
                 }}
               >
-                <RefreshCw size={16} /> Retry ingestion
+                <RefreshCw size={16} /> Retry processing
+              </button>
+            )}
+            {data.duration && !['PROCESSING', 'ANALYZING'].includes(data.status) && (
+              <button
+                disabled={busy}
+                className="button secondary"
+                onClick={() => void analyzeAgain()}
+              >
+                <ScanSearch size={16} /> Analyze again
               </button>
             )}
           </div>
@@ -690,15 +730,126 @@ function SourceDetail() {
               </div>
             ))}
           </section>
+          {data.analysis?.status === 'SUCCEEDED' && (
+            <section className="analysis-layout">
+              <div className="panel analysis-preview">
+                <div className="panel-heading">
+                  <h2>Analysis proxy</h2>
+                  <span className="muted">Optimized review copy</span>
+                </div>
+                <video
+                  controls
+                  preload="metadata"
+                  poster={`/api/sources/${data.id}/assets/thumbnail`}
+                  src={`/api/sources/${data.id}/assets/proxy`}
+                />
+              </div>
+              <div className="panel analysis-summary">
+                <div className="panel-heading">
+                  <h2>Signal summary</h2>
+                </div>
+                <div className="signal-grid">
+                  <span>
+                    <strong>{data.analysis.sceneCount}</strong> scene changes
+                  </span>
+                  <span>
+                    <strong>{data.analysis.motionPeakCount}</strong> motion peaks
+                  </span>
+                  <span>
+                    <strong>{data.analysis.audioPeakCount}</strong> audio peaks
+                  </span>
+                  <span>
+                    <strong>{data.analysis.silenceSegmentCount}</strong> quiet spans
+                  </span>
+                </div>
+                <div className="game-control">
+                  <small>Detected game</small>
+                  <strong>{data.gameDetection?.game ?? 'Pending'}</strong>
+                  <span className="muted">
+                    {data.gameDetection
+                      ? `${Math.round(data.gameDetection.confidence * 100)}% confidence · ${data.gameDetection.method.toLowerCase().replace('_', ' ')}`
+                      : 'No detection result yet'}
+                  </span>
+                  <div>
+                    <select
+                      aria-label="Correct detected game"
+                      value={game}
+                      onChange={(event) => setGame(event.target.value)}
+                    >
+                      <option value="">Correct game…</option>
+                      {[
+                        'Unknown gameplay',
+                        'Grand Theft Auto V',
+                        'Grand Theft Auto VI',
+                        'EA Sports FC',
+                        'FIFA',
+                        'Call of Duty',
+                        'Call of Duty: Warzone',
+                        'Fortnite',
+                        'Valorant',
+                        'Apex Legends',
+                        'Minecraft',
+                        'Rocket League',
+                        'NBA 2K',
+                      ].map((name) => (
+                        <option key={name}>{name}</option>
+                      ))}
+                    </select>
+                    <button
+                      className="button secondary"
+                      disabled={!game || busy}
+                      onClick={() => void saveGame()}
+                    >
+                      Save
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+          {data.analysis?.status === 'SUCCEEDED' && data.candidates && (
+            <section className="panel">
+              <div className="panel-heading">
+                <h2>Candidate moments</h2>
+                <span className="muted">Signal score, not final AI rank</span>
+              </div>
+              {data.candidates.length ? (
+                <div className="candidate-list">
+                  {data.candidates.map((candidate) => (
+                    <div className="candidate-row" key={candidate.id}>
+                      <span className="candidate-play">
+                        <Play size={16} />
+                      </span>
+                      <div>
+                        <strong>
+                          {friendly[candidate.eventType] ??
+                            candidate.eventType.toLowerCase().replaceAll('_', ' ')}
+                        </strong>
+                        <small>
+                          {duration(candidate.startTime)}–{duration(candidate.endTime)} · event at{' '}
+                          {duration(candidate.eventTime)}
+                        </small>
+                        <p>{candidate.reason}</p>
+                      </div>
+                      <span className="signal-score">{candidate.signalScore}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted pad">No distinct activity windows were found.</p>
+              )}
+            </section>
+          )}
           <section className="panel">
             <div className="panel-heading">
-              <h2>Ingestion jobs</h2>
+              <h2>Processing jobs</h2>
             </div>
             <JobRows jobs={data.jobs} />
           </section>
           <p className="phase-note">
-            Ingested means the source passed media validation. Game detection, highlights, and Short
-            generation are not active in Phase 1.
+            Phase 2 candidates come from local scene, motion, and audio signals. Game-specific event
+            adapters and AI ranking begin in Phase 3; no kill, goal, or semantic event is inferred
+            yet.
           </p>
         </>
       )}
@@ -712,7 +863,10 @@ function JobRows({ jobs }: { jobs: JobView[] }) {
         <div className="job-row" key={job.id}>
           <div className="job-header">
             <div>
-              <strong>{job.source?.filename ?? 'Media validation'}</strong>
+              <strong>
+                {job.source?.filename ??
+                  (job.kind === 'ANALYZE' ? 'Gameplay analysis' : 'Media validation')}
+              </strong>
               <small>
                 Attempt {job.attempt} · {new Date(job.createdAt).toLocaleString()}
               </small>
@@ -721,7 +875,7 @@ function JobRows({ jobs }: { jobs: JobView[] }) {
           </div>
           <progress value={job.progress} max={100} />
           <small>
-            {job.progress}% · {job.errorCode ?? 'INGEST'}
+            {job.progress}% · {job.errorCode ?? job.kind}
           </small>
           {job.errorMessage && <p className="job-error">{job.errorMessage}</p>}
         </div>
@@ -736,12 +890,12 @@ function QueuePage() {
       <PageTitle
         eyebrow="BACKGROUND PROCESSING"
         title="Job queue"
-        description="Follow validation progress, attempts, and failures. Updates every few seconds."
+        description="Follow ingestion and analysis progress, attempts, and failures."
       />
       <ErrorBox message={error} />
       <section className="panel">
         <div className="panel-heading">
-          <h2>Recent ingestion jobs</h2>
+          <h2>Recent processing jobs</h2>
           <span className="muted">Latest 100</span>
         </div>
         {data?.jobs.length ? (
@@ -752,6 +906,53 @@ function QueuePage() {
           </p>
         )}
       </section>
+    </>
+  );
+}
+function AnalysisPage() {
+  const { data, error } = useData<{ sources: SourceView[] }>('/analysis');
+  return (
+    <>
+      <PageTitle
+        eyebrow="MOMENT DISCOVERY"
+        title="Gameplay analysis"
+        description="Review real activity signals and candidate windows before Phase 3 ranking."
+      />
+      <ErrorBox message={error} />
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Analyzed recordings</h2>
+          <span className="muted">Latest 100</span>
+        </div>
+        {data?.sources.length ? (
+          <div className="analysis-list">
+            {data.sources.map((source) => (
+              <Link to={`/library/${source.id}`} className="analysis-row" key={source.id}>
+                <img src={`/api/sources/${source.id}/assets/thumbnail`} alt="" />
+                <div>
+                  <strong>{source.filename}</strong>
+                  <small>
+                    <Gamepad2 size={14} /> {source.gameDetection?.game ?? 'Detection pending'}
+                  </small>
+                </div>
+                <span>{source.candidates?.length ?? 0} top candidates</span>
+                <Badge state={source.status} />
+                <ChevronRight size={18} />
+              </Link>
+            ))}
+          </div>
+        ) : data ? (
+          <Empty
+            title="No analysis yet"
+            text="Upload gameplay and the worker will analyze it automatically."
+          />
+        ) : (
+          <p className="pad">Loading…</p>
+        )}
+      </section>
+      <p className="phase-note">
+        Candidate counts here are deterministic signal windows, not claims about gameplay events.
+      </p>
     </>
   );
 }
@@ -823,7 +1024,7 @@ function HealthPage() {
         {data?.heartbeat ? new Date(data.heartbeat).toLocaleString() : 'Not available'}
       </p>
       <p className="phase-note">
-        AI, renderer, YouTube and scheduling services are not part of Phase 1.
+        AI ranking, rendering, YouTube, and scheduling services are not part of Phase 2.
       </p>
     </>
   );
@@ -982,6 +1183,7 @@ function App() {
     ['/dashboard', 'Overview', LayoutDashboard],
     ['/uploads', 'Uploads', UploadCloud],
     ['/library', 'Source library', FolderOpen],
+    ['/analysis', 'Analysis', ScanSearch],
     ['/queue', 'Job queue', Clock3],
     ['/health', 'System health', Activity],
     ['/settings', 'Settings', Settings],
@@ -1056,13 +1258,14 @@ function App() {
             <Route path="/uploads" element={<Uploads />} />
             <Route path="/library" element={<Library />} />
             <Route path="/library/:id" element={<SourceDetail />} />
+            <Route path="/analysis" element={<AnalysisPage />} />
             <Route path="/queue" element={<QueuePage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 1</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 2</span>
           </footer>
         </main>
       </div>

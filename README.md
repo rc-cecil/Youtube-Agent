@@ -1,16 +1,17 @@
 # AI Gameplay Shorts Agent
 
-A creator workspace for turning uploaded gameplay into Shorts. **Phase 1 is implemented: foundation and media ingestion.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
+A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–2 are implemented: foundation, ingestion, and deterministic gameplay analysis.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
 
 ## What works now
 
-- React/TypeScript dashboard, uploads, searchable source library, source details, job queue, system health and configuration view.
+- React/TypeScript dashboard, uploads, searchable source library, analysis workspace, source details, job queue, system health and configuration view.
 - Provisioned user accounts, salted password hashing, expiring database sessions, HttpOnly cookies, origin checks, rate limiting and per-owner access control.
 - Resumable MP4/MOV/WebM uploads with configurable size limits, immutable hashed parts, rights acknowledgment, idempotent finalization and cleanup.
-- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion with durable dispatch, bounded retries, progress and failure history.
+- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion and analysis jobs with durable dispatch, bounded retries, progress and failure history.
 - Original-file storage through local and S3/R2 adapters, ffprobe metadata extraction and full FFmpeg decode validation in a separate worker.
+- Bounded H.264/AAC review proxies and thumbnails, streamed scene/motion/audio analysis, silence detection, generic candidate windows, conservative filename game identification, and audited game overrides.
 
-**Ingested / READY means the original recording passed ingestion checks.** It does not mean AI analysis is complete or a Short is ready to publish. Proxy generation, highlights, AI, Remotion, YouTube, scheduling and analytics belong to subsequent phases. The application makes no OpenAI or YouTube calls and requires no credentials for those services in Phase 1.
+**READY means ingestion and Phase 2 signal analysis completed.** Candidate scores describe local activity only; they do not claim a kill, goal, or other semantic event and are not final highlight ranks. Game-specific adapters and AI ranking are Phase 3. Remotion, YouTube, scheduling, analytics, and learning remain later phases. Phase 2 makes no OpenAI or YouTube calls and needs no credentials for them.
 
 ## Quick start with Docker
 
@@ -33,7 +34,7 @@ Requires Docker Engine/Desktop with Compose. Bindings are localhost-only; the Co
 
    The command refuses to overwrite an existing account. Remove `OWNER_PASSWORD` from `.env` afterward and recreate the API/worker containers to remove it from their environments.
 
-4. Open **http://localhost:5173**, sign in, and upload footage you own or have permission to publish. Follow the recording from Queued → Validating → Ingested. A malformed recording becomes Failed with an actionable message.
+4. Open **http://localhost:5173**, sign in, and upload footage you own or have permission to publish. Follow the recording from Queued → Validating → Analyzing → Ready. A malformed recording becomes Failed with an actionable message.
 
 Logs: `docker compose logs -f api worker`. Stop services with `docker compose --profile app down`; named volumes remain. Do not add `--volumes` unless you intend to erase local databases and media.
 
@@ -79,7 +80,7 @@ npm run test:integration
 Remove-Item Env:DATABASE_URL
 ```
 
-GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux. See [Phase 1 verification](docs/phase-1-verification.md) for actual local results and remaining environment-specific checks. There is no Remotion Studio command yet; compositions and render tests are Phase 4.
+GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux. See [Phase 2 verification](docs/phase-2-verification.md) for actual local results and remaining environment-specific checks. There is no Remotion Studio command yet; compositions and render tests are Phase 4.
 
 ## Production build and deployment boundary
 
@@ -93,4 +94,4 @@ Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is 
 
 The Compose file is a local development environment, not an internet deployment. Resource quotas, backups, alerts, infrastructure secrets and the target S3 bucket must be provisioned before exposure. The container build is supplied but could not be executed here because Docker is unavailable; native production outputs were built and checked.
 
-See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-1-verification.md). Phase 2 requires a separate instruction; implementation stops at Phase 1.
+See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-2-verification.md). Implementation intentionally stops at Phase 2.

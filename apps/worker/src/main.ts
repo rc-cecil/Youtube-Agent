@@ -8,9 +8,11 @@ import {
   redisConnection,
   reconcileJobs,
   cleanUploads,
+  backfillAnalysisJobs,
 } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 import { ingest } from './ingest.js';
+import { analyze } from './analyze.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -21,7 +23,12 @@ connection.on('error', (error) =>
 const queue = new Queue(QUEUE, { connection });
 const worker = new Worker(
   QUEUE,
-  async (job) => ingest(db, storage, config, String(job.data.jobId)),
+  async (job) => {
+    const record = await db.jobRun.findUniqueOrThrow({ where: { id: String(job.data.jobId) } });
+    if (record.kind === 'INGEST') return ingest(db, storage, config, record.id);
+    if (record.kind === 'ANALYZE') return analyze(db, storage, config, record.id);
+    throw new Error(`Unsupported job kind: ${record.kind}`);
+  },
   { connection, concurrency: config.WORKER_CONCURRENCY },
 );
 worker.on('error', (error) => logger.error({ message: error.message }, 'Worker error'));
@@ -35,6 +42,7 @@ async function tick() {
   ticking = true;
   try {
     await db.$queryRaw`SELECT 1`;
+    await backfillAnalysisJobs(db);
     await reconcileJobs(db, queue);
     if (cycles++ % 12 === 0) await cleanUploads(db, storage);
     await connection.set(HEARTBEAT, new Date().toISOString(), 'EX', 30);
@@ -48,7 +56,7 @@ const interval = setInterval(() => {
   void tick();
 }, 5000);
 void tick();
-logger.info('Ingestion worker started');
+logger.info('Media processing worker started');
 let closing = false;
 async function close() {
   if (closing) return;

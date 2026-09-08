@@ -18,6 +18,7 @@ import { runMedia, inspectVideo } from '../packages/video-analysis/src/index.js'
 import { hashPassword, COOKIE } from '../apps/api/src/auth.js';
 import { buildApp } from '../apps/api/src/app.js';
 import { ingest } from '../apps/worker/src/ingest.js';
+import { analyze } from '../apps/worker/src/analyze.js';
 import type { UploadView, SourceView } from '../packages/shared/src/index.js';
 
 const base = getConfig();
@@ -41,7 +42,7 @@ const db = new PrismaClient(),
   storage = new LocalStorage(resolve(root, 'storage'));
 const redis = redisConnection(config.REDIS_URL, true);
 redis.on('error', (error) => console.error(error.message));
-const queue = new Queue(`phase1-test-${runId}`, { connection: redis });
+const queue = new Queue(`phase2-test-${runId}`, { connection: redis });
 const app = await buildApp(db, storage, redis, config);
 let worker: Worker | undefined,
   checked = 0;
@@ -122,10 +123,16 @@ async function upload(
 function startWorker(overrides = config) {
   worker = new Worker(
     queue.name,
-    async (job) => ingest(db, storage, overrides, String(job.data.jobId)),
+    async (queued) => {
+      const job = await db.jobRun.findUniqueOrThrow({ where: { id: String(queued.data.jobId) } });
+      return job.kind === 'ANALYZE'
+        ? analyze(db, storage, overrides, job.id)
+        : ingest(db, storage, overrides, job.id);
+    },
     { connection: redis, concurrency: 2 },
   );
   worker.on('error', (error) => console.error(error));
+  worker.on('completed', () => void reconcileJobs(db, queue));
   return worker;
 }
 try {
@@ -335,6 +342,11 @@ try {
       (await db.jobRun.findUniqueOrThrow({ where: { id: job.id } })).state === 'SUCCEEDED',
     'media ingestion',
   );
+  await waitFor(
+    async () =>
+      (await db.sourceVideo.findUniqueOrThrow({ where: { id: source.id } })).status === 'READY',
+    'gameplay analysis',
+  );
   const details = (
     await request(owner.cookie, 'GET', `/api/sources/${source.id}`)
   ).json<SourceView>();
@@ -345,6 +357,57 @@ try {
   assert.equal(details.videoCodec, 'h264');
   assert.equal(details.jobs[0]?.progress, 100);
   pass('queue-loss recovery and real FFmpeg/ffprobe metadata + full decoding');
+  assert.equal(details.analysis?.status, 'SUCCEEDED');
+  assert.equal(details.gameDetection?.game, 'Unknown gameplay');
+  assert(details.candidates?.length);
+  assert(details.assets?.some((asset) => asset.kind === 'PROXY'));
+  assert(details.assets?.some((asset) => asset.kind === 'THUMBNAIL'));
+  const proxy = await request(owner.cookie, 'GET', `/api/sources/${source.id}/assets/proxy`),
+    thumbnail = await request(owner.cookie, 'GET', `/api/sources/${source.id}/assets/thumbnail`);
+  assert.equal(proxy.statusCode, 200, proxy.body);
+  assert.equal(proxy.headers['content-type'], 'video/mp4');
+  assert.equal(thumbnail.statusCode, 200, thumbnail.body);
+  assert.equal(
+    (await request(other.cookie, 'GET', `/api/sources/${source.id}/assets/proxy`)).statusCode,
+    404,
+  );
+  pass(
+    'proxy, thumbnail, signal analysis, generic detection and candidates are persisted securely',
+  );
+  const override = await request(owner.cookie, 'PUT', `/api/sources/${source.id}/game`, {
+    game: 'Fortnite',
+  });
+  assert.equal(override.statusCode, 200, override.body);
+  assert.equal(override.json<{ game: string; overridden: boolean }>().game, 'Fortnite');
+  assert.equal(override.json<{ game: string; overridden: boolean }>().overridden, true);
+  assert.equal(
+    (await request(other.cookie, 'PUT', `/api/sources/${source.id}/game`, { game: 'FIFA' }))
+      .statusCode,
+    404,
+  );
+  pass('game correction is validated, durable, audited and account-scoped');
+  const reanalysis = await Promise.all([
+    request(owner.cookie, 'POST', `/api/sources/${source.id}/analyze`),
+    request(owner.cookie, 'POST', `/api/sources/${source.id}/analyze`),
+  ]);
+  assert.deepEqual(reanalysis.map((response) => response.statusCode).sort(), [202, 409]);
+  await reconcileJobs(db, queue);
+  await waitFor(async () => {
+    const latest = await db.jobRun.findFirstOrThrow({
+      where: { sourceId: source.id, kind: 'ANALYZE' },
+      orderBy: { createdAt: 'desc' },
+    });
+    return latest.state === 'SUCCEEDED';
+  }, 'manual reanalysis');
+  assert.equal(
+    (await db.gameDetection.findUniqueOrThrow({ where: { sourceId: source.id } })).game,
+    'Fortnite',
+  );
+  const analysisList = (await request(owner.cookie, 'GET', '/api/analysis')).json<{
+    sources: SourceView[];
+  }>();
+  assert(analysisList.sources.some((item) => item.id === source.id));
+  pass('manual reanalysis is serialized and preserves an explicit game override');
   await ingest(db, storage, config, job.id);
   assert.equal((await db.jobRun.findUniqueOrThrow({ where: { id: job.id } })).attempt, 1);
   pass('duplicate job execution is a terminal-success no-op');

@@ -97,8 +97,71 @@ model SourceVideo {
   updatedAt DateTime @updatedAt
   assets VideoAsset[]
   jobs JobRun[]
+  analysis VideoAnalysis?
+  gameDetection GameDetection?
+  candidates HighlightCandidate[]
   @@index([userId, createdAt])
   @@index([userId, sha256])
+}
+model VideoAnalysis {
+  id String @id @default(uuid())
+  sourceId String @unique
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  version Int @default(1)
+  status String @default("RUNNING")
+  sampleRate Float
+  sceneCount Int @default(0)
+  motionPeakCount Int @default(0)
+  audioPeakCount Int @default(0)
+  silenceSegmentCount Int @default(0)
+  summary Json
+  startedAt DateTime @default(now())
+  completedAt DateTime?
+  updatedAt DateTime @updatedAt
+  signals AnalysisSignal[]
+  candidates HighlightCandidate[]
+}
+model AnalysisSignal {
+  id String @id @default(uuid())
+  analysisId String
+  analysis VideoAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  kind String
+  timestamp Float
+  value Float
+  duration Float?
+  evidence Json?
+  @@index([analysisId, kind, timestamp])
+}
+model GameDetection {
+  id String @id @default(uuid())
+  sourceId String @unique
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  game String
+  edition String?
+  confidence Float
+  detectorProfile String
+  method String
+  evidence Json
+  overridden Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model HighlightCandidate {
+  id String @id @default(uuid())
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  analysisId String
+  analysis VideoAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  startTime Float
+  eventTime Float
+  endTime Float
+  eventType String
+  signalScore Int
+  reason String
+  signals Json
+  createdAt DateTime @default(now())
+  @@index([sourceId, signalScore])
+  @@index([analysisId, eventTime])
 }
 model VideoAsset {
   id String @id @default(uuid())

@@ -1,16 +1,9 @@
-import { Captions, ScanLine, Scissors, LockKeyhole, ArrowRight } from 'lucide-react';
+import { Captions, Scissors, LockKeyhole, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const previews = [
-  {
-    title: 'Find the moment',
-    icon: ScanLine,
-    text: 'A future analysis workspace for reviewing potential highlights from your gameplay.',
-    action: 'Highlight analysis',
-    stages: ['Source recording', 'Candidate moments', 'Your review'],
-  },
   {
     title: 'Shape the Short',
     icon: Scissors,

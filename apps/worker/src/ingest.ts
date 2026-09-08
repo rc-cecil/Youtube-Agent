@@ -11,6 +11,7 @@ export async function ingest(db: PrismaClient, storage: Storage, config: Config,
     where: { id },
     include: { source: { include: { assets: true } } },
   });
+  if (job.kind !== 'INGEST') throw new Error(`Expected INGEST job, received ${job.kind}`);
   if (['SUCCEEDED', 'CANCELLED', 'FAILED'].includes(job.state)) return;
   const running = await db.$transaction(async (tx) => {
     const row = await tx.jobRun.update({
@@ -45,12 +46,12 @@ export async function ingest(db: PrismaClient, storage: Storage, config: Config,
     const metadata = await inspectVideo(materialized.path, job.source.mimeType, config, (value) => {
       progress = value;
     });
-    await db.$transaction([
-      db.sourceVideo.update({
+    await db.$transaction(async (tx) => {
+      await tx.sourceVideo.update({
         where: { id: job.sourceId },
-        data: { ...metadata, status: 'READY' },
-      }),
-      db.jobRun.update({
+        data: { ...metadata, status: 'ANALYZING' },
+      });
+      await tx.jobRun.update({
         where: { id },
         data: {
           state: 'SUCCEEDED',
@@ -59,8 +60,17 @@ export async function ingest(db: PrismaClient, storage: Storage, config: Config,
           errorCode: null,
           errorMessage: null,
         },
-      }),
-    ]);
+      });
+      const activeAnalysis = await tx.jobRun.findFirst({
+        where: {
+          sourceId: job.sourceId,
+          kind: 'ANALYZE',
+          state: { in: ['PENDING', 'RUNNING', 'RETRYING', 'SUCCEEDED'] },
+        },
+      });
+      if (!activeAnalysis)
+        await tx.jobRun.create({ data: { sourceId: job.sourceId, kind: 'ANALYZE' } });
+    });
     logger.info(
       { jobId: id, sourceId: job.sourceId, durationMs: Date.now() - start },
       'Ingestion validated',

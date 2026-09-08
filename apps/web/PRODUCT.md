@@ -12,7 +12,7 @@ Gameplay creators upload their original recordings and manage a reliable source 
 
 ## Capabilities and constraints
 
-Phase 1 includes owner authentication, resumable uploads, rights acknowledgment, source metadata, storage, FFmpeg ingestion, job retries, and system health. All activity and statistics must come from the API. AI detection, editing, rendering, publishing, and analytics are not implemented by this redesign.
+Phases 1–2 include owner authentication, resumable uploads, rights acknowledgment, source metadata, storage, FFmpeg ingestion, proxy generation, deterministic activity analysis, generic candidate windows, job retries, and system health. All activity and statistics must come from the API. AI ranking, game-specific adapters, editing, rendering, publishing, and analytics are not implemented.
 
 The user approved clearly labeled visual previews of future features. These are explanatory interfaces only, with no enabled processing or fabricated results. Existing working routes and security boundaries must remain intact.
 

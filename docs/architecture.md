@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. The explicit request to implement **Phase 1 only** overrides Section 78's instruction to continue through all phases.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phase 1 was completed first; the subsequent explicit instruction authorizes and completes Phase 2 only.
 
 ## 1. Existing architecture assessment
 
@@ -14,7 +14,9 @@ Phase 1 creates `apps/web`, `apps/api`, `apps/worker`, and packages `db`, `confi
 
 Phase 1: User owns Session, SourceVideo and UploadSession. UploadSession owns immutable numbered UploadParts; finalized uploads link to one SourceVideo. SourceVideo owns VideoAssets and JobRuns; JobRun stores durable queue intent, state, attempts, progress, timestamps, and safe error details. FailureEvent records failed attempts. AuditLog records authentication and upload actions. All user-facing reads and writes filter by owner. Session tokens are random, hashed at rest, expire and are revocable. Passwords use salted scrypt. Owner provisioning is an explicit CLI command; there is no public signup.
 
-Source states preserve the specification: UPLOADED → PROCESSING → READY or FAILED, with ANALYZING and ARCHIVED reserved. In Phase 1, READY means **ingestion validated**, not highlights analyzed. A separate ingestion job states this distinction in the UI. Store actual container, video/audio codec, duration, dimensions, frame rate, audio presence, bytes, hash, and rights acknowledgment timestamp. Audio absence is valid and visible; it must not be fabricated.
+Source states preserve the specification: UPLOADED → PROCESSING → ANALYZING → READY or FAILED, with ARCHIVED reserved. In Phase 2, READY means ingestion and deterministic signal analysis completed, not that a final Short exists. Store actual container, video/audio codec, duration, dimensions, frame rate, audio presence, bytes, hash, and rights acknowledgment timestamp. Audio absence is valid and visible; it must not be fabricated.
+
+Phase 2 adds one current `VideoAnalysis` per source, notable `AnalysisSignal` rows, owner-visible `HighlightCandidate` windows, and one `GameDetection` with explicit provenance and override state. `PROXY` and `THUMBNAIL` assets use deterministic generated keys. Reanalysis replaces derived signals/candidates while preserving originals and user game overrides.
 
 Later migrations add: User → YouTubeConnection → Channel; SourceVideo → AnalysisJob/GameDetection/DetectedEvent → HighlightCandidate → HighlightScore/ShortConcept → versioned EditDecisionList → RenderedShort. Campaign owns unique channel/local-date/editorial-role ScheduleSlots; a slot owns publication attempts, and YouTubePublication has a unique external video ID and idempotency key. AnalyticsSnapshot and RevenueSnapshot use unique report-window/dimensions keys and retain history. PerformanceFeature, PerformanceInsight, Experiment and versioned StrategyConfig retain evidence and audit trails. Notifications reference jobs/publications. Use foreign keys, owner/channel indexes, unique deduplication constraints, UTC timestamps and explicit IANA timezone configuration. Monetary values use decimals and unavailable metrics remain null.
 
@@ -52,7 +54,7 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Stop after Phase 1 even if its gate passes. Phase 2 requires a new user instruction.**
+**Stop after Phase 2. Phase 3 requires a new user instruction.**
 
 ## 10. Known risks and decisions
 

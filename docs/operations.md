@@ -1,11 +1,11 @@
-# Phase 1 operations
+# Phase 2 operations
 
 ## Runtime ownership
 
 - API owns sessions, owner-filtered reads, bounded chunk receipt, and streaming finalization.
 - PostgreSQL owns durable source/job/session state. A source and PENDING job commit together.
 - Redis/BullMQ delivers jobs using JobRun IDs; the worker reconstructs missing queue entries.
-- Worker owns FFmpeg/ffprobe, retries, progress, heartbeat, upload cleanup, and expiration.
+- Worker owns FFmpeg/ffprobe, ingestion, proxy/signal analysis, retries, progress, heartbeat, upload cleanup, and expiration.
 - Local storage holds originals/parts; S3/R2 uses the same contract. Local multi-process deployment needs a shared volume.
 
 BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idempotent work](https://docs.bullmq.io/patterns/idempotent-jobs), and [retry/backoff behavior](https://docs.bullmq.io/guide/retrying-failing-jobs) inform delivery. PostgreSQL retains terminal state after queue retention expires, so replaying a completed job is a no-op.
@@ -30,6 +30,9 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `FFMPEG_PATH`, `FFPROBE_PATH`                          | Worker executable paths                         |
 | `MEDIA_TIMEOUT_MS`                                     | Full decode timeout, default four hours         |
 | `WORKER_CONCURRENCY`                                   | Default two, range 1–16                         |
+| `ANALYSIS_FPS`                                         | Grayscale activity samples/sec, default one     |
+| `ANALYSIS_CANDIDATE_LIMIT`                             | Maximum generic windows/source, default 12      |
+| `PROXY_MAX_WIDTH`                                      | Review proxy maximum width, default 720         |
 | `SESSION_HOURS`                                        | Session lifetime, default 24 hours              |
 | `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
 | `LOG_LEVEL`                                            | Structured log level                            |
@@ -45,7 +48,9 @@ Reserved later-phase variables in `.env.example` include OpenAI model categories
 
 **Worker stopped:** uploads stay Queued; health becomes unavailable after the 30-second heartbeat expires. Restart it. BullMQ handles stalled work, and repeated delivery after durable success is a no-op. Queue failures reconcile to database failures rather than permanent Running records. Three attempts bound each JobRun; manual retry creates a new audited run.
 
-**FFmpeg or storage unavailable:** retryable failures create FailureEvents and RETRYING state with exponential backoff. After three attempts, the source fails. Correct configuration and use Retry ingestion.
+**FFmpeg or storage unavailable:** retryable failures create FailureEvents and RETRYING state with exponential backoff. After three attempts, the source fails. Correct configuration and use Retry processing; the API restarts the failed stage.
+
+**Analysis recovery:** ingestion commits a separate PENDING analysis intent and moves the source to ANALYZING. Reconciliation also backfills previously validated Phase 1 sources. Reanalysis is serialized, replaces derived signals/candidates, and preserves a user-corrected game. Deterministic proxy keys make storage retries idempotent.
 
 **Invalid media:** deterministic failures stop after one attempt. Re-export and upload again. Supported video codecs are H.264, HEVC, VP8/9, AV1, MPEG-4, and ProRes. Dimensions are 16–8192 pixels, frame rate >0–240 fps, duration >0–24 hours. Audio is optional. Originals remain available to their owner.
 

@@ -2,9 +2,9 @@ import { Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 import type { PrismaClient } from '@prisma/client';
 import type { Storage } from '../../storage/src/index.js';
-export const QUEUE = 'video-ingestion';
+export const QUEUE = 'video-processing';
 export const MAX_ATTEMPTS = 3;
-export const HEARTBEAT = 'shorts:ingestion:heartbeat';
+export const HEARTBEAT = 'shorts:processing:heartbeat';
 export function redisConnection(url: string, worker = false) {
   return new Redis(url, {
     maxRetriesPerRequest: worker ? null : 1,
@@ -23,11 +23,11 @@ export async function reconcileJobs(db: PrismaClient, queue: Queue) {
     const queued = await queue.getJob(job.id);
     if (!queued) {
       if (job.attempt >= MAX_ATTEMPTS) {
-        await failExhausted(db, job.id, job.sourceId);
+        await failExhausted(db, job.id, job.sourceId, job.kind);
         continue;
       }
       await queue.add(
-        'ingest',
+        job.kind.toLowerCase(),
         { jobId: job.id },
         {
           jobId: job.id,
@@ -38,18 +38,36 @@ export async function reconcileJobs(db: PrismaClient, queue: Queue) {
         },
       );
     } else if ((await queued.getState()) === 'failed') {
-      await failExhausted(db, job.id, job.sourceId);
+      await failExhausted(db, job.id, job.sourceId, job.kind);
     }
   }
 }
-async function failExhausted(db: PrismaClient, id: string, sourceId: string) {
+export async function backfillAnalysisJobs(db: PrismaClient) {
+  const sources = await db.sourceVideo.findMany({
+    where: { status: 'READY', duration: { not: null }, analysis: null },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  });
+  for (const source of sources)
+    await db.$transaction(async (tx) => {
+      const claimed = await tx.sourceVideo.updateMany({
+        where: { id: source.id, status: 'READY', analysis: null },
+        data: { status: 'ANALYZING' },
+      });
+      if (!claimed.count) return;
+      await tx.jobRun.create({ data: { sourceId: source.id, kind: 'ANALYZE' } });
+    });
+}
+async function failExhausted(db: PrismaClient, id: string, sourceId: string, kind: string) {
+  const jobLabel = kind === 'ANALYZE' ? 'analysis' : 'ingestion';
   await db.$transaction(async (tx) => {
     const changed = await tx.jobRun.updateMany({
       where: { id, state: { in: ['PENDING', 'RUNNING', 'RETRYING'] } },
       data: {
         state: 'FAILED',
         errorCode: 'WORKER_INTERRUPTED',
-        errorMessage: 'Worker retry limit reached. Check worker health and retry ingestion.',
+        errorMessage: `Worker retry limit reached. Check worker health and retry ${jobLabel}.`,
         finishedAt: new Date(),
       },
     });
@@ -60,7 +78,7 @@ async function failExhausted(db: PrismaClient, id: string, sourceId: string) {
           jobId: id,
           attempt: MAX_ATTEMPTS,
           errorCode: 'WORKER_INTERRUPTED',
-          errorMessage: 'Worker retry limit reached.',
+          errorMessage: `Worker retry limit reached during ${jobLabel}.`,
         },
       });
     }

@@ -36,6 +36,9 @@ const schema = z.object({
     .positive()
     .default(4 * 3600_000),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+  ANALYSIS_FPS: z.coerce.number().min(0.25).max(4).default(1),
+  ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(12),
+  PROXY_MAX_WIDTH: z.coerce.number().int().min(320).max(1920).default(720),
   SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   TIMEZONE: z
     .string()

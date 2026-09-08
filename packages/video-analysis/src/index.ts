@@ -80,6 +80,61 @@ export function runMedia(
     });
   });
 }
+
+export function runMediaStream(
+  binary: string,
+  args: string[],
+  timeout: number,
+  onChunk: (chunk: Buffer) => void,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(binary, args, {
+      shell: false,
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let stderr = '',
+      timedOut = false,
+      settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill('SIGKILL');
+    }, timeout);
+    child.stdout.on('data', (chunk: Buffer) => onChunk(chunk));
+    child.stderr.on('data', (chunk: Buffer) => {
+      stderr = (stderr + chunk.toString()).slice(-8192);
+    });
+    child.on('error', () =>
+      finish(
+        new MediaError(
+          'MEDIA_TOOL_UNAVAILABLE',
+          'FFmpeg could not start. Check the worker installation.',
+          false,
+        ),
+      ),
+    );
+    child.on('close', (code) => {
+      if (timedOut) finish(new MediaError('MEDIA_TIMEOUT', 'Media analysis timed out.', false));
+      else if (code !== 0)
+        finish(
+          new MediaError(
+            'ANALYSIS_FAILED',
+            stderr.includes('Invalid data')
+              ? 'The recording became unreadable during analysis.'
+              : 'FFmpeg could not analyze the recording.',
+          ),
+        );
+      else finish();
+    });
+  });
+}
 const probeSchema = z.object({
   streams: z.array(
     z.object({
@@ -218,4 +273,293 @@ export async function inspectVideo(
     },
   );
   return metadata;
+}
+
+export type AnalysisSignal = {
+  kind: 'SCENE_CHANGE' | 'MOTION_PEAK' | 'AUDIO_PEAK' | 'SILENCE';
+  timestamp: number;
+  value: number;
+  duration?: number;
+  evidence?: Record<string, string | number | boolean>;
+};
+
+export type MediaSignalResult = {
+  signals: AnalysisSignal[];
+  summary: {
+    meanMotion: number;
+    maxMotion: number;
+    meanLoudnessDb: number | null;
+    maxLoudnessDb: number | null;
+    waveform: number[];
+  };
+};
+
+function mean(values: number[]) {
+  return values.length ? values.reduce((total, value) => total + value, 0) / values.length : 0;
+}
+
+function deviation(values: number[], average: number) {
+  return Math.sqrt(mean(values.map((value) => (value - average) ** 2)));
+}
+
+function extrema(values: number[], mode: 'min' | 'max') {
+  return values.reduce(
+    (result, value) => (mode === 'min' ? Math.min(result, value) : Math.max(result, value)),
+    mode === 'min' ? Infinity : -Infinity,
+  );
+}
+
+export async function extractMediaSignals(
+  path: string,
+  duration: number,
+  hasAudio: boolean,
+  config: Config,
+): Promise<MediaSignalResult> {
+  const width = 160,
+    height = 90,
+    frameBytes = width * height,
+    visual: { timestamp: number; value: number }[] = [];
+  let pending = Buffer.alloc(0),
+    previous: Buffer | undefined,
+    frameIndex = 0;
+  await runMediaStream(
+    config.FFMPEG_PATH,
+    [
+      '-nostdin',
+      '-v',
+      'error',
+      '-threads',
+      '2',
+      '-i',
+      path,
+      '-map',
+      '0:v:0',
+      '-vf',
+      `fps=${config.ANALYSIS_FPS},scale=${width}:${height}:force_original_aspect_ratio=disable,format=gray`,
+      '-f',
+      'rawvideo',
+      'pipe:1',
+    ],
+    config.MEDIA_TIMEOUT_MS,
+    (chunk) => {
+      pending = Buffer.concat([pending, chunk]);
+      while (pending.length >= frameBytes) {
+        const frame = Buffer.from(pending.subarray(0, frameBytes));
+        pending = pending.subarray(frameBytes);
+        if (previous) {
+          let difference = 0,
+            sampled = 0;
+          for (let index = 0; index < frame.length; index += 4) {
+            difference += Math.abs(frame[index]! - previous[index]!);
+            sampled++;
+          }
+          visual.push({
+            timestamp: frameIndex / config.ANALYSIS_FPS,
+            value: difference / sampled / 255,
+          });
+        }
+        previous = frame;
+        frameIndex++;
+      }
+    },
+  );
+  const motionValues = visual.map((point) => point.value),
+    meanMotion = mean(motionValues),
+    motionDeviation = deviation(motionValues, meanMotion),
+    motionThreshold = Math.max(0.04, meanMotion + motionDeviation * 1.25),
+    sceneThreshold = Math.max(0.18, meanMotion + motionDeviation * 3),
+    signals: AnalysisSignal[] = [];
+  for (let index = 0; index < visual.length; index++) {
+    const point = visual[index]!,
+      previousValue = visual[index - 1]?.value ?? -1,
+      nextValue = visual[index + 1]?.value ?? -1;
+    if (point.value >= sceneThreshold && point.value >= previousValue && point.value >= nextValue)
+      signals.push({
+        kind: 'SCENE_CHANGE',
+        timestamp: Math.min(duration, point.timestamp),
+        value: point.value,
+        evidence: { metric: 'mean_luma_frame_difference' },
+      });
+    else if (
+      point.value >= motionThreshold &&
+      point.value >= previousValue &&
+      point.value >= nextValue
+    )
+      signals.push({
+        kind: 'MOTION_PEAK',
+        timestamp: Math.min(duration, point.timestamp),
+        value: point.value,
+        evidence: { metric: 'mean_luma_frame_difference' },
+      });
+  }
+
+  const loudness: number[] = [];
+  if (hasAudio) {
+    const sampleRate = 8000,
+      windowSeconds = 0.5,
+      windowBytes = sampleRate * windowSeconds * 2;
+    let audioPending = Buffer.alloc(0);
+    await runMediaStream(
+      config.FFMPEG_PATH,
+      [
+        '-nostdin',
+        '-v',
+        'error',
+        '-threads',
+        '1',
+        '-i',
+        path,
+        '-map',
+        '0:a:0',
+        '-ac',
+        '1',
+        '-ar',
+        String(sampleRate),
+        '-f',
+        's16le',
+        'pipe:1',
+      ],
+      config.MEDIA_TIMEOUT_MS,
+      (chunk) => {
+        audioPending = Buffer.concat([audioPending, chunk]);
+        while (audioPending.length >= windowBytes) {
+          const window = audioPending.subarray(0, windowBytes);
+          audioPending = audioPending.subarray(windowBytes);
+          let squareTotal = 0;
+          for (let index = 0; index < window.length; index += 2) {
+            const value = window.readInt16LE(index) / 32768;
+            squareTotal += value * value;
+          }
+          const rms = Math.sqrt(squareTotal / (window.length / 2));
+          loudness.push(20 * Math.log10(Math.max(rms, 1e-6)));
+        }
+      },
+    );
+    const loudnessMean = mean(loudness),
+      loudnessDeviation = deviation(loudness, loudnessMean),
+      peakThreshold = Math.min(-8, loudnessMean + Math.max(3, loudnessDeviation * 1.5));
+    let silenceStart: number | undefined;
+    for (let index = 0; index < loudness.length; index++) {
+      const value = loudness[index]!,
+        timestamp = index * windowSeconds,
+        isLocalPeak =
+          value >= (loudness[index - 1] ?? -Infinity) &&
+          value >= (loudness[index + 1] ?? -Infinity);
+      if (value >= peakThreshold && isLocalPeak)
+        signals.push({
+          kind: 'AUDIO_PEAK',
+          timestamp,
+          value,
+          evidence: { metric: 'rms_dbfs' },
+        });
+      if (value <= -45 && silenceStart === undefined) silenceStart = timestamp;
+      if ((value > -45 || index === loudness.length - 1) && silenceStart !== undefined) {
+        const end = value > -45 ? timestamp : timestamp + windowSeconds;
+        if (end - silenceStart >= 1.5)
+          signals.push({
+            kind: 'SILENCE',
+            timestamp: silenceStart,
+            duration: end - silenceStart,
+            value: extrema(
+              loudness.slice(Math.floor(silenceStart / windowSeconds), index + 1),
+              'min',
+            ),
+            evidence: { metric: 'rms_dbfs', threshold: -45 },
+          });
+        silenceStart = undefined;
+      }
+    }
+  }
+  const stride = Math.max(1, Math.ceil(loudness.length / 400));
+  return {
+    signals: signals.sort((a, b) => a.timestamp - b.timestamp).slice(0, 10_000),
+    summary: {
+      meanMotion,
+      maxMotion: motionValues.length ? extrema(motionValues, 'max') : 0,
+      meanLoudnessDb: loudness.length ? mean(loudness) : null,
+      maxLoudnessDb: loudness.length ? extrema(loudness, 'max') : null,
+      waveform: loudness.filter((_value, index) => index % stride === 0).map((value) => value),
+    },
+  };
+}
+
+export async function createProxy(
+  input: string,
+  output: string,
+  duration: number,
+  config: Config,
+  progress: (value: number) => void = () => {},
+) {
+  await runMedia(
+    config.FFMPEG_PATH,
+    [
+      '-y',
+      '-nostdin',
+      '-v',
+      'error',
+      '-threads',
+      '2',
+      '-i',
+      input,
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a?',
+      '-vf',
+      `scale=w='min(${config.PROXY_MAX_WIDTH},iw)':h=-2`,
+      '-r',
+      '24',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '28',
+      '-pix_fmt',
+      'yuv420p',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '64k',
+      '-movflags',
+      '+faststart',
+      '-progress',
+      'pipe:1',
+      output,
+    ],
+    config.MEDIA_TIMEOUT_MS,
+    (text) => {
+      const match = /out_time_us=(\d+)/.exec(text);
+      if (match) progress(Math.min(45, 5 + Math.floor((Number(match[1]) / 1e6 / duration) * 40)));
+    },
+  );
+}
+
+export async function createThumbnail(
+  input: string,
+  output: string,
+  timestamp: number,
+  config: Config,
+) {
+  await runMedia(
+    config.FFMPEG_PATH,
+    [
+      '-y',
+      '-nostdin',
+      '-v',
+      'error',
+      '-ss',
+      String(Math.max(0, timestamp)),
+      '-i',
+      input,
+      '-frames:v',
+      '1',
+      '-vf',
+      `scale=w='min(${config.PROXY_MAX_WIDTH},iw)':h=-2`,
+      '-q:v',
+      '3',
+      output,
+    ],
+    Math.min(config.MEDIA_TIMEOUT_MS, 120_000),
+  );
 }

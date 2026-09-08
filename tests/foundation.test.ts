@@ -8,6 +8,11 @@ import { parseConfig } from '../packages/config/src/index.js';
 import { assertExtension, uploadInput, expectedPartBytes } from '../packages/shared/src/index.js';
 import { LocalStorage } from '../packages/storage/src/index.js';
 import { parseProbe, runMedia } from '../packages/video-analysis/src/index.js';
+import {
+  buildGenericCandidates,
+  GenericGameplayDetector,
+} from '../packages/video-analysis/src/generic-detector.js';
+import { identifyGame } from '../packages/video-analysis/src/game-identification.js';
 
 describe('password and session security', () => {
   it('salts passwords and rejects wrong passwords', async () => {
@@ -162,5 +167,43 @@ describe('actual metadata validation', () => {
       code: 'MEDIA_TOOL_UNAVAILABLE',
       permanent: false,
     });
+  });
+});
+describe('Phase 2 gameplay analysis', () => {
+  it('identifies only explicit filename evidence and otherwise falls back safely', () => {
+    expect(identifyGame('ranked-warzone-session.mp4')).toMatchObject({
+      game: 'Call of Duty: Warzone',
+      method: 'FILENAME',
+    });
+    expect(identifyGame('family-vacation.mp4')).toMatchObject({
+      game: 'Unknown gameplay',
+      confidence: 0,
+      method: 'GENERIC',
+    });
+  });
+  it('clusters nearby signals into bounded, non-semantic candidates', () => {
+    const candidates = buildGenericCandidates(
+      [
+        { kind: 'MOTION_PEAK', timestamp: 10, value: 0.2 },
+        { kind: 'AUDIO_PEAK', timestamp: 11, value: -5 },
+        { kind: 'SCENE_CHANGE', timestamp: 40, value: 0.4 },
+      ],
+      50,
+      12,
+    );
+    expect(candidates).toHaveLength(2);
+    expect(candidates[0]?.startTime).toBeGreaterThanOrEqual(0);
+    expect(candidates[0]?.endTime).toBeLessThanOrEqual(50);
+    expect(candidates.every((candidate) => !/kill|goal/i.test(candidate.reason))).toBe(true);
+  });
+  it('provides a truthful low-score fallback for quiet footage', () => {
+    const detector = new GenericGameplayDetector(),
+      [candidate] = detector.enrichCandidates(
+        detector.scoreEvents(detector.detectEvents([], 20)),
+        20,
+        1,
+      );
+    expect(candidate).toMatchObject({ eventTime: 10, signalScore: 10 });
+    expect(candidate?.reason).toContain('Fallback');
   });
 });

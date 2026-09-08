@@ -57,6 +57,7 @@ export function assertExtension(filename: string, mime: string) {
 }
 export type JobView = {
   id: string;
+  kind: string;
   state: string;
   progress: number;
   attempt: number;
@@ -65,6 +66,39 @@ export type JobView = {
   createdAt: string;
   updatedAt: string;
   source?: { filename: string };
+};
+export type AnalysisView = {
+  status: string;
+  sampleRate: number;
+  sceneCount: number;
+  motionPeakCount: number;
+  audioPeakCount: number;
+  silenceSegmentCount: number;
+  summary: {
+    meanMotion?: number;
+    maxMotion?: number;
+    meanLoudnessDb?: number | null;
+    maxLoudnessDb?: number | null;
+    waveform?: number[];
+  };
+  completedAt: string | null;
+};
+export type GameDetectionView = {
+  game: string;
+  edition: string | null;
+  confidence: number;
+  detectorProfile: string;
+  method: string;
+  overridden: boolean;
+};
+export type CandidateView = {
+  id: string;
+  startTime: number;
+  eventTime: number;
+  endTime: number;
+  eventType: string;
+  signalScore: number;
+  reason: string;
 };
 export type SourceView = {
   id: string;
@@ -83,6 +117,10 @@ export type SourceView = {
   sha256: string;
   rightsAcknowledgedAt: string;
   jobs: JobView[];
+  analysis?: AnalysisView | null;
+  gameDetection?: GameDetectionView | null;
+  candidates?: CandidateView[];
+  assets?: { kind: string; bytes: string }[];
 };
 export type UploadView = {
   id: string;
