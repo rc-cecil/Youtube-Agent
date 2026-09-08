@@ -1,6 +1,15 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter, NavLink, Routes, Route, Link, Navigate, useParams } from 'react-router-dom';
+import {
+  BrowserRouter,
+  NavLink,
+  Routes,
+  Route,
+  Link,
+  Navigate,
+  useParams,
+  useLocation,
+} from 'react-router-dom';
 import {
   Activity,
   ArrowDownToLine,
@@ -19,9 +28,28 @@ import {
   ShieldCheck,
   UploadCloud,
   X,
+  ArrowLeft,
+  CircleHelp,
 } from 'lucide-react';
 import type { SourceView, JobView, UploadView } from '../../../packages/shared/src/index.js';
 import { api, post } from './api.js';
+import { DashboardHero } from '@/components/dashboard-hero';
+import { FuturePreview } from '@/components/future-preview';
+import { Button } from '@/components/ui/button';
+import { Badge as StatusBadge } from '@/components/ui/badge';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  Empty as EmptyState,
+  EmptyHeader,
+  EmptyMedia,
+  EmptyTitle,
+  EmptyDescription,
+  EmptyContent,
+} from '@/components/ui/empty';
+import { Skeleton } from '@/components/ui/skeleton';
+import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
 import './styles.css';
 
 type User = { id: string; email: string };
@@ -51,17 +79,17 @@ const friendly: Record<string, string> = {
 };
 function Badge({ state }: { state: string }) {
   return (
-    <span className={`badge ${state.toLowerCase()}`}>
-      <span />
+    <StatusBadge variant="outline" data-status={state.toLowerCase()}>
+      <span className="status-dot" aria-hidden="true" />
       {friendly[state] ?? state}
-    </span>
+    </StatusBadge>
   );
 }
 function ErrorBox({ message }: { message: string }) {
   return message ? (
-    <div className="error" role="alert">
-      {message}
-    </div>
+    <Alert variant="destructive" className="error-message">
+      <AlertDescription>{message}</AlertDescription>
+    </Alert>
   ) : null;
 }
 function useData<T>(path: string) {
@@ -100,7 +128,7 @@ function useData<T>(path: string) {
   return { data, error, refresh };
 }
 function PageTitle({
-  eyebrow,
+  eyebrow: _eyebrow,
   title,
   description,
   children,
@@ -113,7 +141,6 @@ function PageTitle({
   return (
     <header className="page-heading">
       <div>
-        <div className="eyebrow">{eyebrow}</div>
         <h1>{title}</h1>
         <p>{description}</p>
       </div>
@@ -123,14 +150,23 @@ function PageTitle({
 }
 function Empty({ title, text }: { title: string; text: string }) {
   return (
-    <div className="empty">
-      <Film size={30} />
-      <h3>{title}</h3>
-      <p>{text}</p>
-      <Link className="button primary" to="/uploads">
-        <Plus size={16} /> Upload gameplay
-      </Link>
-    </div>
+    <EmptyState className="recordings-empty">
+      <EmptyHeader>
+        <EmptyMedia variant="icon">
+          <Film />
+        </EmptyMedia>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{text}</EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button asChild variant="outline">
+          <Link to="/uploads">
+            <Plus data-icon="inline-start" />
+            Upload gameplay
+          </Link>
+        </Button>
+      </EmptyContent>
+    </EmptyState>
   );
 }
 function SourceRows({ sources }: { sources: SourceView[] }) {
@@ -169,48 +205,16 @@ function Dashboard() {
     <>
       <PageTitle
         eyebrow="YOUR CREATOR WORKSPACE"
-        title="Good footage starts here."
-        description="Bring your gameplay together. Keep every recording in view."
+        title="Your studio, at a glance."
+        description="A little less admin. A lot more gameplay."
       >
-        <Link className="button primary" to="/uploads">
-          <Plus size={18} /> Upload gameplay
+        <Link className="button secondary" to="/queue">
+          <Clock3 size={17} />
+          View job queue
         </Link>
       </PageTitle>
       <ErrorBox message={error} />
-      <section className="hero">
-        <div>
-          <div className="eyebrow">FOUNDATION · PHASE 01</div>
-          <h2>
-            Your next great Short
-            <br />
-            starts with a recording.
-          </h2>
-          <p>
-            Upload your original gameplay. We’ll securely store it,
-            <br className="desktop" /> check the file, and organize it in your library.
-          </p>
-          <Link className="button light" to="/uploads">
-            Add your footage <ArrowRight size={17} />
-          </Link>
-        </div>
-        <div className="hero-art" aria-hidden="true">
-          <div className="orbit one" />
-          <div className="orbit two" />
-          <div className="frame back" />
-          <div className="frame front">
-            <Clapperboard size={44} />
-            <div className="art-lines">
-              <i />
-              <i />
-              <i />
-            </div>
-            <span>READY FOR THE NEXT CHAPTER</span>
-          </div>
-          <div className="art-check">
-            <Check size={20} />
-          </div>
-        </div>
-      </section>
+      <DashboardHero />
       <div className="stats">
         {[
           ['Source recordings', data?.total, FolderOpen],
@@ -225,7 +229,9 @@ function Dashboard() {
                 <span>{String(label)}</span>
                 <MetricIcon size={18} />
               </div>
-              <strong>{value === undefined ? '—' : String(value)}</strong>
+              <strong>
+                {value === undefined ? <Skeleton className="h-9 w-12" /> : String(value)}
+              </strong>
               <small>
                 {label === 'Ingestion complete'
                   ? 'Validated and stored'
@@ -257,13 +263,17 @@ function Dashboard() {
               text="Your uploaded recordings will appear here."
             />
           ) : (
-            <p className="muted pad">Loading recordings…</p>
+            <div className="loading-rows" role="status" aria-label="Loading recordings">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-12 w-full" />
+            </div>
           )}
         </section>
         <section className="panel workflow">
           <div className="panel-heading">
-            <h2>From file to library</h2>
-            <span className="mini-label">LIVE</span>
+            <h2>A good place to start</h2>
+            <CircleHelp size={18} aria-hidden="true" />
           </div>
           {[
             ['01', 'Upload your gameplay', 'MP4, MOV, or WebM. Resume interrupted uploads.'],
@@ -278,11 +288,13 @@ function Dashboard() {
               </div>
             </div>
           ))}
-          <div className="phase-note">
-            Highlight analysis and Short creation arrive in later phases.
-          </div>
+          <Link className="workflow-link" to="/uploads">
+            Bring in your first session
+            <ArrowRight size={16} />
+          </Link>
         </section>
       </div>
+      <FuturePreview />
     </>
   );
 }
@@ -462,7 +474,7 @@ function Uploads() {
             Uploads are saved in parts. If your connection drops, choose the same file and pick up
             where you left off.
           </p>
-          <hr />
+          <Separator />
           <h3>What happens next?</h3>
           <p>
             A background worker checks the actual format, reads its metadata, and decodes the
@@ -624,7 +636,7 @@ function SourceDetail() {
   return (
     <>
       <Link className="back-link" to="/library">
-        ← Source library
+        <ArrowLeft size={16} /> Source library
       </Link>
       <PageTitle
         eyebrow="RECORDING DETAILS"
@@ -873,10 +885,9 @@ function Login({ onLogin }: { onLogin(user: User): void }) {
     <div className="login-page">
       <div className="login-story">
         <div className="brand">
-          <Clapperboard /> shorts<span>agent</span>
+          <Clapperboard /> shorts<span>studio</span>
         </div>
         <div>
-          <div className="eyebrow">LESS ADMIN. MORE GAMEPLAY.</div>
           <h1>
             Give your footage
             <br />a place to begin.
@@ -896,34 +907,37 @@ function Login({ onLogin }: { onLogin(user: User): void }) {
             void submit(e);
           }}
         >
-          <div className="eyebrow">YOUR WORKSPACE AWAITS</div>
           <h1>Welcome back.</h1>
           <p>Sign in to manage your gameplay recordings.</p>
           <ErrorBox message={error} />
-          <label>
-            Email
-            <input
-              type="email"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </label>
-          <label>
-            Password
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </label>
-          <button disabled={busy} className="button primary full">
-            {busy ? 'Signing in…' : 'Sign in'}
-            <ArrowRight size={17} />
-          </button>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="email">Email</FieldLabel>
+              <Input
+                id="email"
+                type="email"
+                autoComplete="username"
+                required
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="password">Password</FieldLabel>
+              <Input
+                id="password"
+                type="password"
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </Field>
+            <Button disabled={busy} type="submit" size="lg" className="w-full">
+              {busy ? 'Signing in…' : 'Sign in'}
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </FieldGroup>
           <p className="login-note">Use the account provisioned by your workspace administrator.</p>
         </form>
       </main>
@@ -931,9 +945,28 @@ function Login({ onLogin }: { onLogin(user: User): void }) {
   );
 }
 function App() {
+  const location = useLocation();
   const [user, setUser] = useState<User | null>(null),
     [loading, setLoading] = useState(true),
     [error, setError] = useState('');
+  useEffect(() => {
+    const keyboard = () => {
+      document.documentElement.dataset.input = 'keyboard';
+    };
+    const pointer = () => {
+      document.documentElement.dataset.input = 'pointer';
+    };
+    window.addEventListener('keydown', keyboard);
+    window.addEventListener('pointerdown', pointer);
+    return () => {
+      window.removeEventListener('keydown', keyboard);
+      window.removeEventListener('pointerdown', pointer);
+    };
+  }, []);
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    document.getElementById('main-content')?.focus({ preventScroll: true });
+  }, [location.pathname]);
   useEffect(() => {
     void api<{ user: User }>('/auth/me')
       .then((r) => setUser(r.user))
@@ -955,14 +988,20 @@ function App() {
   ] as const;
   return (
     <div className="app-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
       <aside className="sidebar">
         <Link to="/dashboard" className="brand">
-          <Clapperboard size={26} /> shorts<span>agent</span>
+          <span className="brand-mark">
+            <Clapperboard size={22} />
+          </span>{' '}
+          shorts<span>studio</span>
         </Link>
         <div className="workspace-tag">
-          <span /> CREATOR WORKSPACE
+          <span /> Personal workspace
         </div>
-        <nav>
+        <nav aria-label="Main navigation">
           {nav.map(([to, text, Icon]) => (
             <NavLink key={to} to={to}>
               <Icon size={19} />
@@ -972,9 +1011,13 @@ function App() {
         </nav>
         <div className="sidebar-bottom">
           <div className="foundation">
-            <span className="mini-label">PHASE 01</span>
-            <strong>A foundation for great content.</strong>
-            <p>Upload, validate, organize.</p>
+            <Clapperboard size={22} aria-hidden="true" />
+            <strong>More play. Less busywork.</strong>
+            <p>Your footage is the starting point.</p>
+            <Link to="/uploads">
+              Add a recording
+              <Plus size={14} />
+            </Link>
           </div>
           <div className="account">
             <div className="avatar">{user.email[0]?.toUpperCase()}</div>
@@ -999,13 +1042,14 @@ function App() {
       <div className="main-shell">
         <div className="topbar">
           <span>
-            Workspace <ChevronRight size={14} /> Gameplay
+            Personal workspace <ChevronRight size={14} />{' '}
+            {nav.find(([path]) => location.pathname.startsWith(path))?.[1] ?? 'Overview'}
           </span>
           <span className="private-label">
             <ShieldCheck size={14} /> Private workspace
           </span>
         </div>
-        <main className="content">
+        <main className="content" id="main-content" tabIndex={-1}>
           <ErrorBox message={error} />
           <Routes>
             <Route path="/dashboard" element={<Dashboard />} />
@@ -1018,7 +1062,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Built around your gameplay.<span>Shorts Agent / Foundation</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 1</span>
           </footer>
         </main>
       </div>

@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-08T12:20:00Z",
+  "title": "Design System: Shorts Studio",
+  "extensions": {
+    "motion": [
+      { "name": "duration-quick", "value": "150ms", "purpose": "Press and hover feedback" },
+      { "name": "duration-fast", "value": "250ms", "purpose": "Play/pause icon swap" },
+      { "name": "ease-smooth-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Responsive state changes" }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1180px" },
+      { "name": "stacked-panels", "value": "960px" },
+      { "name": "mobile", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The next available workspace action.",
+      "html": "<button class='ds-primary'>Upload gameplay</button>",
+      "css": ".ds-primary{background:var(--primary);color:var(--primary-foreground);border:0;border-radius:8px;padding:10px 16px;min-height:42px;font:550 13px sans-serif;cursor:pointer}.ds-primary:hover{filter:brightness(1.08)}.ds-primary:focus-visible{outline:2px solid var(--ring);outline-offset:4px}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The source-footage desk",
+    "overview": "Graphite surfaces, readable type, and lime actions.",
+    "keyCharacteristics": ["Single supplied-media focal point", "Compact operational screens", "Explicit future-feature boundaries"],
+    "rules": [],
+    "dos": ["Preserve semantic tokens and visible focus."],
+    "donts": ["Do not render duplicate Efferd demo dashboards or fabricated metrics."]
+  }
+}

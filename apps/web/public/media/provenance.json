@@ -1,0 +1,12 @@
+{
+  "gameplay-studio.mp4": {
+    "origin": "User-supplied Smartphone_AI_gaming_workflow_an…_202609072357.mp4",
+    "processing": "H.264 CRF 25, original 1280x720 and frame rate, audio removed, faststart enabled",
+    "purpose": "Decorative animated 3D dashboard hero, not a source recording or application output"
+  },
+  "gameplay-studio-poster.jpg": {
+    "origin": "Frame at 00:03 from the same user-supplied MP4",
+    "processing": "JPEG poster, original dimensions",
+    "purpose": "Static fallback for reduced motion, data saving, or unavailable autoplay"
+  }
+}

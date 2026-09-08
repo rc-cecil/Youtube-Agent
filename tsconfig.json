@@ -5,6 +5,8 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "jsx": "react-jsx",
+    "baseUrl": ".",
+    "paths": { "@/*": ["./apps/web/src/*"] },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,

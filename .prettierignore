@@ -5,5 +5,7 @@ dist
 apps/web/dist
 output
 .playwright-cli
+.agents
+.impeccable
 package-lock.json
 docs/master-specification.md
