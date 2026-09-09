@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–4 were completed sequentially under explicit user authorization; later phases remain design-only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–5 were implemented sequentially under explicit user authorization; later phases remain design-only.
 
 ## 1. Existing architecture assessment
 
@@ -56,7 +56,9 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Stop after Phase 4. Phase 5 requires a new user instruction.**
+**Phase 5 is implemented under explicit authorization. Stop before Phase 6.**
+
+Phase 5 extends this architecture as described in [the editorial implementation plan](phase-5-plan.md). `DailySlate`, `SlateSlot`, `EditorialSettings`, `ShortFingerprint`, and independent `EditorialRun` records support source-independent planning. The worker claims durable PostgreSQL requests with a renewable lease, fences attempts, and commits under owner/candidate locks. Existing BullMQ media/render queues are retained. The calendar expresses editorial reservations, never external publication state.
 
 ## 10. Known risks and decisions
 

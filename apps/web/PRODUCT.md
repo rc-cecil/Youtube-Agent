@@ -12,9 +12,9 @@ Gameplay creators upload their original recordings and manage a reliable source 
 
 ## Capabilities and constraints
 
-Phases 1–4 include owner authentication, resumable uploads, rights acknowledgment, source metadata, storage, FFmpeg ingestion, proxy/activity analysis, game-specific and AI ranking, concept generation, versioned EDLs, Remotion preview/rendering, QC, and manual review. All activity and statistics come from the API. Daily slate planning, publishing, analytics, and learning are not implemented.
+Phases 1–5 include owner authentication, resumable uploads, rights acknowledgment, source metadata, storage, FFmpeg ingestion, proxy/activity analysis, game-specific and AI ranking, concept generation, versioned EDLs, Remotion preview/rendering, QC, manual review, and editorial slate planning with HERO-first selection and duplicate/diversity guards. All activity and statistics come from the API. Publishing, analytics, and learning are not implemented.
 
-The user approved clearly labeled visual previews of future features. Only later editorial scheduling and publishing remain explanatory previews; Phase 4 editing/rendering controls are real and owner-scoped. Existing working routes and security boundaries must remain intact.
+The user approved clearly labeled visual previews of future features. YouTube publishing remains an explanatory preview; editing, rendering and editorial reservation controls are real and owner-scoped. Existing working routes and security boundaries must remain intact.
 
 ## Brand commitments
 

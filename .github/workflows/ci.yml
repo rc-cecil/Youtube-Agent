@@ -1,4 +1,4 @@
-name: Phase 4 checks
+name: Phase 5 checks
 on: [push, pull_request]
 jobs:
   verification:
@@ -30,6 +30,7 @@ jobs:
       - run: npm run db:migrate
       - run: npm run typecheck
       - run: npm run lint
+      - run: npm run format:check
       - run: npm test
       - run: npm run test:integration
       - run: npm run test:render

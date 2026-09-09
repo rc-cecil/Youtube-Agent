@@ -23,6 +23,8 @@ import { analyze } from '../apps/worker/src/analyze.js';
 import { rankCandidates } from '../apps/worker/src/rank.js';
 import { planShorts } from '../apps/worker/src/plan-shorts.js';
 import { renderShort } from '../apps/renderer/src/render.js';
+import { processEditorialRun } from '../apps/worker/src/editorial.js';
+import { addDays, localDate } from '../packages/editorial/src/index.js';
 import type { UploadView, SourceView } from '../packages/shared/src/index.js';
 
 const base = getConfig();
@@ -539,8 +541,101 @@ try {
     ).statusCode,
     200,
   );
+  const planDate = addDays(localDate(new Date(), 'Africa/Accra'), 1);
+  const planRequests = await Promise.all([
+    request(owner.cookie, 'POST', '/api/editorial/plan', { date: planDate }),
+    request(owner.cookie, 'POST', '/api/editorial/plan', { date: planDate }),
+  ]);
+  assert(
+    planRequests.every((r) => r.statusCode === 202),
+    planRequests.map((r) => `${r.statusCode}: ${r.body}`).join('\n'),
+  );
+  const editorialId = planRequests[0]!.json<{ id: string }>().id;
+  assert.equal(editorialId, planRequests[1]!.json<{ id: string }>().id);
+  await Promise.all([
+    processEditorialRun(db, storage, config, editorialId),
+    processEditorialRun(db, storage, config, editorialId),
+  ]);
+  const editorialRun = await db.editorialRun.findUniqueOrThrow({ where: { id: editorialId } });
+  assert.equal(editorialRun.state, 'SUCCEEDED', editorialRun.errorMessage ?? '');
+  assert.equal(editorialRun.attempt, 1);
+  const slate = await db.dailySlate.findUniqueOrThrow({
+    where: { userId_localDate: { userId: owner.user.id, localDate: planDate } },
+    include: { slots: true },
+  });
+  assert.equal(slate.slots.length, 3);
+  assert.equal(slate.slots.find((s) => s.role === 'HERO')?.shortId, planned.id);
+  assert.equal(slate.slots.filter((s) => !s.shortId).length, 2);
+  assert.equal(
+    (await db.shortFingerprint.findUniqueOrThrow({ where: { shortId: planned.id } })).frameHashes
+      .length,
+    3,
+  );
+  assert.equal(
+    (await request(other.cookie, 'GET', '/api/editorial')).json<{ slates: unknown[] }>().slates
+      .length,
+    0,
+  );
+  assert.equal(
+    (await request(owner.cookie, 'POST', '/api/editorial/plan', { date: '2026-02-30' })).statusCode,
+    400,
+  );
+  assert.equal(
+    (
+      await request(owner.cookie, 'PATCH', '/api/shorts/' + planned.id + '/reuse', {
+        kind: 'REPLAY',
+        relatedShortId: planned.id,
+        reason: 'Testing same short reference',
+      })
+    ).statusCode,
+    400,
+  );
+  pass(
+    'editorial requests are serialized, real fingerprints persist, HERO is protected, sparse slots are explicit and accounts remain isolated',
+  );
+  const recovery = await db.editorialRun.create({
+    data: {
+      userId: owner.user.id,
+      localDate: addDays(planDate, 1),
+      state: 'RUNNING',
+      attempt: 1,
+      leaseUntil: new Date(Date.now() - 1000),
+    },
+  });
+  await processEditorialRun(db, storage, config, recovery.id);
+  assert.equal(
+    (await db.editorialRun.findUniqueOrThrow({ where: { id: recovery.id } })).state,
+    'SUCCEEDED',
+  );
+  const secondSlate = await db.dailySlate.findUniqueOrThrow({
+    where: { userId_localDate: { userId: owner.user.id, localDate: addDays(planDate, 1) } },
+    include: { slots: true },
+  });
+  assert(secondSlate.slots.every((s) => !s.shortId));
+  pass(
+    'expired editorial leases recover after restart and reserved Shorts cannot be assigned twice',
+  );
+  if (process.env.INTEGRATION_BROWSER_REVIEW === '1') {
+    await app.listen({ host: '127.0.0.1', port: 3002 });
+    console.log(
+      `Browser review: http://localhost:5173/calendar · ${owner.user.email} · ${password} · day ${planDate}. Ctrl+C resumes tests and cleanup.`,
+    );
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 10 * 60000);
+      process.once('SIGINT', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  }
   const rerender = await request(owner.cookie, 'POST', `/api/shorts/${planned.id}/render`);
   assert.equal(rerender.statusCode, 202, rerender.body);
+  assert.equal(await db.slateSlot.count({ where: { shortId: planned.id } }), 0);
+  assert.equal(
+    (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).editorialRole,
+    null,
+  );
+  pass('rerendering invalidates editorial reservations before content changes');
   assert.equal(
     (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).reviewState,
     'PENDING',

@@ -89,7 +89,8 @@ export function DashboardHero() {
           Make it <em>worth keeping.</em>
         </h2>
         <p>
-          Give your best sessions a home. Upload, validate, and organize your original gameplay.
+          Turn your best sessions into Shorts. Find the moment, shape the edit, and give it a place
+          in your daily slate.
         </p>
         <div className="hero-actions">
           <Button asChild size="lg">
@@ -99,8 +100,8 @@ export function DashboardHero() {
             </Link>
           </Button>
           <Button asChild variant="ghost" size="lg">
-            <Link to="/library">
-              Explore library
+            <Link to="/calendar">
+              Plan your daily slate
               <ArrowUpRight data-icon="inline-end" />
             </Link>
           </Button>

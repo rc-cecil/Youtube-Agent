@@ -17,6 +17,7 @@ import { ingest } from './ingest.js';
 import { analyze } from './analyze.js';
 import { rankCandidates } from './rank.js';
 import { planShorts } from './plan-shorts.js';
+import { editorialTick } from './editorial.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -63,6 +64,17 @@ async function tick() {
 const interval = setInterval(() => {
   void tick();
 }, 5000);
+let editorialBusy = false;
+let editorialTask: Promise<void> | undefined;
+const editorialInterval = setInterval(() => {
+  if (editorialBusy) return;
+  editorialBusy = true;
+  editorialTask = editorialTick(db, storage, config)
+    .catch((error) => logger.error({ message: String(error) }, 'Editorial planning failed'))
+    .finally(() => {
+      editorialBusy = false;
+    });
+}, 10000);
 void tick();
 logger.info('Media processing worker started');
 let closing = false;
@@ -70,6 +82,8 @@ async function close() {
   if (closing) return;
   closing = true;
   clearInterval(interval);
+  clearInterval(editorialInterval);
+  await editorialTask;
   await worker.close();
   await queue.close();
   await connection.quit();

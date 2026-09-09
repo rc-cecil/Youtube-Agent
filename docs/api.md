@@ -1,4 +1,4 @@
-# Phase 4 REST contract
+# Phase 5 REST contract
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 
@@ -25,7 +25,6 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 | `POST /sources/:id/retry`       | 202 retry of latest failed ingestion, analysis, or ranking stage   |
 | `POST /sources/:id/shorts`      | 202 serialized concept and EDL planning job                        |
 | `GET /analysis`                 | Ranked finalists, score evidence, cached token/cost usage          |
-| `GET /shorts`                   | Latest 100 owner-scoped generated Shorts and render state          |
 | `GET /shorts/:id`               | Concepts, source/ranking evidence, EDL versions and render history |
 | `GET /shorts/:id/media`         | Private stream of the latest QC-approved MP4                       |
 | `POST /shorts/:id/render`       | 202 durable rerender job using the latest validated EDL            |
@@ -37,6 +36,16 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 | `GET /dashboard`                | Actual source counts, bytes, duration and recent recordings        |
 | `GET /health/live`              | Public process liveness only                                       |
 | `GET /health`                   | Authenticated dependency readiness; 503 when degraded              |
+
+## Editorial endpoints
+
+| Method and path             | Behavior                                                                                                        |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `GET /settings/editorial`   | Owner's timezone, three role times, diversity guards and buffer settings                                        |
+| `PATCH /settings/editorial` | Validated settings; invalidates future reservations                                                             |
+| `POST /editorial/plan`      | `{date:"YYYY-MM-DD"}` → 202 durable idempotent active request; before first slot and within 90 days             |
+| `GET /editorial`            | Owner's slates, slots, diagnostics, recent runs and source counts; publication unavailable                      |
+| `PATCH /shorts/:id/reuse`   | `{kind,relatedShortId,reason}`; pair-specific replay/part-two/alternate-edit declaration, or null kind to clear |
 
 ## Upload protocol
 

@@ -1,4 +1,12 @@
-# Phase 4 operations
+# Phase 5 operations
+
+## Editorial planning
+
+Apply all Prisma migrations and restart API and worker together. The worker polls durable editorial requests every ten seconds, with a fifteen-minute renewable lease, attempt fencing and three bounded attempts. Graceful shutdown drains active editorial work. Automatic planning is opt-in per account and maintains the configured 3–7-day editorial buffer before the first daily slot.
+
+Default times are 12:00, 16:00 and 20:00 in Africa/Accra. Ambiguous or nonexistent local times are rejected. Missing distinct eligible Shorts remain explicit empty slots. Future reservations are invalidated when their eligibility or content changes; replan after review, metadata or settings changes. These reservations do not publish to YouTube.
+
+Optional `AI_EMBEDDING_MODEL` enables semantic vectors with `AI_MODE=openai` and the server-side provider key. Without it, comparison reports a lexical fallback. Visual fingerprints use actual proxy frames. Monitor persisted EditorialRun state/errors and worker logs; no interactive coding session is required.
 
 ## Runtime ownership
 

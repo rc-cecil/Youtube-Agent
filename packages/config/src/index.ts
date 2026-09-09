@@ -40,6 +40,10 @@ const schema = z.object({
   ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(12),
   PROXY_MAX_WIDTH: z.coerce.number().int().min(320).max(1920).default(720),
   AI_MODE: z.enum(['mock', 'openai']).default('mock'),
+  AI_EMBEDDING_MODEL: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
   AI_VISION_MODEL: z
     .string()
     .optional()

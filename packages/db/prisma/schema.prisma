@@ -58,6 +58,9 @@ model User {
   auditLogs AuditLog[]
   shorts GeneratedShort[]
   shortSettings ShortCreationSettings?
+  editorialSettings EditorialSettings?
+  slates DailySlate[]
+  editorialRuns EditorialRun[]
 }
 model Session {
   id String @id @default(uuid())
@@ -339,6 +342,11 @@ model GeneratedShort {
   editPlans EditDecisionList[]
   renders RenderArtifact[]
   @@index([userId, createdAt])
+  fingerprint ShortFingerprint?
+  slateSlot SlateSlot?
+  reuseKind String?
+  reuseOfId String?
+  reuseReason String?
   @@index([sourceId, createdAt])
   @@index([state, createdAt])
 }
@@ -397,4 +405,70 @@ model AuditLog {
   resourceId String?
   createdAt DateTime @default(now())
   @@index([userId, createdAt])
+}
+
+model EditorialSettings {
+  userId String @id
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timezone String @default("Africa/Accra")
+  postingTimes String[] @default(["12:00", "16:00", "20:00"])
+  similarityThreshold Float @default(0.78)
+  maxSourcePerDay Int @default(2)
+  sourceCooldownMinutes Int @default(10)
+  bufferDays Int @default(3)
+  automaticPlanning Boolean @default(false)
+  updatedAt DateTime @updatedAt
+}
+model DailySlate {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  localDate String
+  timezone String
+  revision Int @default(1)
+  settings Json
+  diagnostics Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  slots SlateSlot[]
+  @@unique([userId, localDate])
+}
+model SlateSlot {
+  id String @id @default(uuid())
+  slateId String
+  slate DailySlate @relation(fields: [slateId], references: [id], onDelete: Cascade)
+  role String
+  localTime String
+  plannedAt DateTime
+  shortId String? @unique
+  short GeneratedShort? @relation(fields: [shortId], references: [id], onDelete: SetNull)
+  score Float?
+  reason String
+  @@unique([slateId, role])
+  @@index([plannedAt])
+}
+model ShortFingerprint {
+  shortId String @id
+  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  sourceHash String
+  frameHashes String[]
+  embedding Float[] @default([])
+  embeddingModel String?
+  textHash String?
+  version Int @default(1)
+  createdAt DateTime @default(now())
+}
+model EditorialRun {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  localDate String
+  state JobState @default(PENDING)
+  attempt Int @default(0)
+  errorMessage String?
+  availableAt DateTime @default(now())
+  leaseUntil DateTime?
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
+  @@index([state, availableAt])
 }

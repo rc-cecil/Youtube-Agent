@@ -21,6 +21,7 @@ import {
   verifyPassword,
 } from './auth.js';
 import { UploadService } from './uploads.js';
+import { registerEditorial, invalidateSlates } from './editorial.js';
 
 export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis, config: Config) {
   const app = Fastify({
@@ -37,6 +38,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
   app.decorateRequest('userId', '');
   const requireAuth = authentication(db),
     uploads = new UploadService(db, storage, config);
+  registerEditorial(app, db, config);
   const dummyHash = await hashPassword(newToken());
   const cookieOptions = {
     httpOnly: true,
@@ -122,7 +124,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 4,
+    phase: 5,
     storage: config.STORAGE_PROVIDER,
     aiMode: config.AI_MODE,
     aiModel:
@@ -459,6 +461,8 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     { preHandler: requireAuth },
     async (req, reply) => {
       const artifact = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
+        await invalidateSlates(tx, req.userId, req.params.id);
         await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const short = await tx.generatedShort.findFirst({
           where: { id: req.params.id, userId: req.userId },
@@ -507,6 +511,8 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
         })
         .parse(req.body);
       return db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
+        await invalidateSlates(tx, req.userId, req.params.id);
         await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const short = await tx.generatedShort.findFirst({
           where: { id: req.params.id, userId: req.userId },
@@ -549,15 +555,21 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
       if (input.decision === 'APPROVED' && short.state !== 'READY')
         throw new AppError(409, 'QC_REQUIRED', 'Only a QC-approved render can be approved');
-      await db.$transaction([
-        db.generatedShort.update({
+      await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
+        await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${short.id} FOR UPDATE`;
+        const current = await tx.generatedShort.findUniqueOrThrow({ where: { id: short.id } });
+        if (input.decision === 'APPROVED' && current.state !== 'READY')
+          throw new AppError(409, 'QC_REQUIRED', 'Only a QC-approved render can be approved');
+        await invalidateSlates(tx, req.userId, short.id);
+        await tx.generatedShort.update({
           where: { id: short.id },
           data: { reviewState: input.decision },
-        }),
-        db.auditLog.create({
+        });
+        await tx.auditLog.create({
           data: { userId: req.userId, action: `SHORT_${input.decision}`, resourceId: short.id },
-        }),
-      ]);
+        });
+      });
       return { ok: true };
     },
   );
@@ -593,10 +605,14 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
           .max(20),
       })
       .parse(req.body);
-    return db.shortCreationSettings.upsert({
-      where: { userId: req.userId },
-      create: { userId: req.userId, ...input },
-      update: input,
+    return db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
+      await invalidateSlates(tx, req.userId);
+      return tx.shortCreationSettings.upsert({
+        where: { userId: req.userId },
+        create: { userId: req.userId, ...input },
+        update: input,
+      });
     });
   });
   app.put<{ Params: { id: string } }>(
@@ -779,7 +795,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       services: { database, redis: redisStatus, storage: storageStatus, worker, renderer },
       heartbeat,
       rendererHeartbeat,
-      phase: 4,
+      phase: 5,
     };
   });
   return app;

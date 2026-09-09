@@ -1,16 +1,9 @@
-import { CalendarDays, UploadCloud, LockKeyhole, ArrowRight } from 'lucide-react';
+import { UploadCloud, LockKeyhole, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const previews = [
-  {
-    title: 'Plan the daily slate',
-    icon: CalendarDays,
-    text: 'A future editorial workspace for diversity-aware DISCOVERY, ENGAGEMENT, and protected HERO selection.',
-    action: 'Phase 5 planning',
-    stages: ['Candidate pool', 'Diversity checks', 'Daily roles'],
-  },
   {
     title: 'Publish to YouTube',
     icon: UploadCloud,

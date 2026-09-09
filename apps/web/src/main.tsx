@@ -49,6 +49,7 @@ import type {
 import { api, post } from './api.js';
 import { DashboardHero } from '@/components/dashboard-hero';
 import { FuturePreview } from '@/components/future-preview';
+import { EditorialCalendar, ReuseDeclaration } from '@/components/editorial-calendar';
 import { Button } from '@/components/ui/button';
 import { Badge as StatusBadge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -65,6 +66,7 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import './styles.css';
+import './editorial-motion.css';
 
 const RemotionPreview = lazy(() => import('@/components/remotion-preview'));
 
@@ -1001,6 +1003,9 @@ type ShortDetailView = Omit<ShortSummaryView, 'source' | 'renders'> & {
   description: string;
   hashtags: string[];
   editorialRole: string | null;
+  reuseKind: string | null;
+  reuseOfId: string | null;
+  reuseReason: string | null;
   confidence: number;
   source: {
     id: string;
@@ -1197,6 +1202,11 @@ function ShortDetail() {
               <X size={16} /> Reject
             </button>
           </div>
+          {editing && <ReuseDeclaration id={data.id} initial={data} />}
+          <p>
+            Editorial role: {data.editorialRole ?? 'Unassigned'} ·{' '}
+            <Link to="/calendar">Open editorial calendar</Link>
+          </p>
           {editing && (
             <form className="panel metadata-form" onSubmit={(event) => void saveMetadata(event)}>
               <label>
@@ -1282,7 +1292,7 @@ function ShortDetail() {
                 <dt>Crop</dt>
                 <dd>{eventLabel(edl.cropStrategy)}</dd>
                 <dt>Editorial role</dt>
-                <dd>{data.editorialRole ?? 'Unassigned · Phase 5'}</dd>
+                <dd>{data.editorialRole ?? 'Unassigned'}</dd>
                 <dt>Metadata</dt>
                 <dd>
                   {data.description}
@@ -1596,8 +1606,8 @@ function SettingsPage({ user }: { user: User }) {
       </section>
       <ShortSettingsPanel />
       <p className="phase-note">
-        Autopilot is stored now but cannot publish in Phase 4. Every rendered Short still requires a
-        deliberate approval; scheduling and publishing arrive in later phases.
+        Manual mode requires approval before editorial assignment. Autopilot permits assignment only
+        when all configured thresholds pass. YouTube scheduling and publishing arrive in Phase 6.
       </p>
     </>
   );
@@ -1656,7 +1666,10 @@ function ShortSettingsPanel() {
           />
           <span>
             <strong>Autopilot preference</strong>
-            <small>Saved for future publishing; inactive in Phase 4.</small>
+            <small>
+              Allows threshold-qualified Shorts into editorial plans without manual approval.
+              Publishing remains unavailable.
+            </small>
           </span>
         </label>
         {numberField('minimumHighlightScore', 'Minimum highlight score')}
@@ -1823,6 +1836,7 @@ function App() {
     ['/library', 'Source library', FolderOpen],
     ['/analysis', 'Analysis', ScanSearch],
     ['/shorts', 'Shorts', Clapperboard],
+    ['/calendar', 'Editorial calendar', Clock3],
     ['/queue', 'Job queue', Clock3],
     ['/health', 'System health', Activity],
     ['/settings', 'Settings', Settings],
@@ -1900,13 +1914,14 @@ function App() {
             <Route path="/analysis" element={<AnalysisPage />} />
             <Route path="/shorts" element={<ShortsPage />} />
             <Route path="/shorts/:id" element={<ShortDetail />} />
+            <Route path="/calendar" element={<EditorialCalendar />} />
             <Route path="/queue" element={<QueuePage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 4</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 5</span>
           </footer>
         </main>
       </div>

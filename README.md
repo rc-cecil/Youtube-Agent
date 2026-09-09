@@ -1,6 +1,6 @@
 # AI Gameplay Shorts Agent
 
-A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–4 are implemented: foundation, ingestion, gameplay analysis, game-aware AI ranking, concept/EDL planning, vertical Remotion rendering, QC, preview, and manual review.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
+A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–5 are implemented**, including the foundation, analysis, AI ranking, Remotion editing/rendering, QC, review, and editorial intelligence. The [master specification](docs/master-specification.md) is the source of truth; the [architecture plan](docs/architecture.md) maps the full product.
 
 ## What works now
 
@@ -16,7 +16,10 @@ A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–4 ar
 - Reusable 1080×1920 Remotion compositions with six crop strategies, tracked framing data, selective captions, hard cuts, zoom/freeze/replay/overlays, audio ducking, and original-audio preservation.
 - A dedicated renderer with loudness normalization, full output decode, resolution/duration/audio/boundary/safe-text/rights/metadata QC, private output storage, rerender history, and manual approve/reject controls.
 
-For a source, **READY** means ingestion, local analysis, and ranking completed. For a Short, **READY** means a 1080×1920 artifact passed Phase 4 QC. Mock mode is a development fixture and never pretends to understand unseen content. Set `AI_MODE=openai`, `OPENAI_API_KEY`, `AI_VISION_MODEL`, and optionally `AI_REASONING_MODEL` for live analysis/planning. Daily slate intelligence, YouTube, scheduling, analytics, and learning remain later phases.
+- Daily editorial slates with protected HERO selection, distinct Discovery/Engagement roles, source distribution, global duplicate prevention, frame fingerprints, explicit related-edit exceptions, and a 7/30-day calendar.
+- Durable editorial requests with leased execution, three bounded attempts, restart recovery, settings snapshots, owner locks, and unique Short reservations. Optional rolling editorial plans cover 3–7 days.
+
+For a source, **READY** means ingestion, analysis, and ranking completed. For a Short, **READY** means its vertical artifact passed QC. Calendar assignments are editorial reservations, not YouTube publication schedules. `AI_MODE=mock` is a labeled deterministic development fixture. Configure `AI_MODE=openai`, `OPENAI_API_KEY`, `AI_VISION_MODEL`, and optionally `AI_REASONING_MODEL` for live analysis/planning. `AI_EMBEDDING_MODEL` enables cached learned semantic embeddings for editorial comparisons; without it, the documented lexical fallback is used. YouTube integration begins in Phase 6; analytics and learning follow later.
 
 ## Quick start with Docker
 
@@ -88,7 +91,7 @@ npm run test:integration
 Remove-Item Env:DATABASE_URL
 ```
 
-GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux and installs Remotion's compatible Headless Shell. See [Phase 4 verification](docs/phase-4-verification.md) for actual local results and remaining environment-specific checks.
+GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux and installs Remotion's compatible Headless Shell. See [Phase 5 verification](docs/phase-5-verification.md) for local results and remaining environment-specific checks.
 
 ## Production build and deployment boundary
 
@@ -103,4 +106,4 @@ Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is 
 
 The Compose file is a local development environment, not an internet deployment. Resource quotas, backups, alerts, infrastructure secrets and the target S3 bucket must be provisioned before exposure. The container build is supplied but could not be executed here because Docker is unavailable; native production outputs were built and checked.
 
-See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-4-verification.md). Implementation intentionally stops at Phase 4.
+See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-5-verification.md). Implementation stops at Phase 5.

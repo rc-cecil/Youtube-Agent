@@ -3,6 +3,121 @@
 @import 'shadcn/tailwind.css';
 @import '@fontsource-variable/geist';
 @import '@fontsource-variable/manrope';
+.editorial-summary,
+.editorial-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: end;
+  margin: 24px 0;
+}
+.editorial-summary strong {
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.editorial-summary span {
+  color: var(--muted-foreground);
+}
+.editorial-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 24px;
+  margin: 24px 0 32px;
+}
+.editorial-slot {
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  min-width: 0;
+}
+.editorial-slot header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.editorial-slot h2 {
+  font-size: 20px;
+}
+.editorial-slot h3 {
+  overflow-wrap: anywhere;
+  margin-top: 16px;
+}
+.editorial-slot p {
+  color: var(--muted-foreground);
+}
+.editorial-slot img {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 12px;
+  margin-top: 16px;
+}
+.editorial-slot time {
+  color: var(--primary);
+  font-variant-numeric: tabular-nums;
+}
+.editorial-horizon,
+.editorial-settings {
+  padding: 24px;
+  margin-top: 24px;
+}
+.editorial-days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+.editorial-day {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--background);
+  border-radius: 8px;
+  text-align: left;
+  min-height: 100px;
+  color: var(--foreground);
+}
+.editorial-day:hover {
+  background: var(--muted);
+}
+.editorial-day small {
+  color: var(--muted-foreground);
+}
+.editorial-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+  min-height: 32px;
+}
+.editorial-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  margin: 20px 0;
+}
+.editorial-settings label,
+.editorial-toolbar label {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+@media (max-width: 1000px) {
+  .editorial-days {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  .editorial-slots,
+  .editorial-fields {
+    grid-template-columns: 1fr;
+  }
+  .editorial-days {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .editorial-toolbar {
+    align-items: stretch;
+  }
+}
 @custom-variant dark (&:is(.dark *));
 :root {
   --graphite-950: #111315;
