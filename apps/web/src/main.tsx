@@ -1607,7 +1607,8 @@ function SettingsPage({ user }: { user: User }) {
       <ShortSettingsPanel />
       <p className="phase-note">
         Manual mode requires approval before editorial assignment. Autopilot permits assignment only
-        when all configured thresholds pass. YouTube scheduling and publishing arrive in Phase 6.
+        when all configured thresholds pass. Review and explicitly schedule uploads in the editorial
+        calendar.
       </p>
     </>
   );
@@ -1668,7 +1669,7 @@ function ShortSettingsPanel() {
             <strong>Autopilot preference</strong>
             <small>
               Allows threshold-qualified Shorts into editorial plans without manual approval.
-              Publishing remains unavailable.
+              Uploads still require an explicit scheduling action in the calendar.
             </small>
           </span>
         </label>
@@ -1921,7 +1922,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 5</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 6</span>
           </footer>
         </main>
       </div>

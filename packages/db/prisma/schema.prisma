@@ -61,6 +61,72 @@ model User {
   editorialSettings EditorialSettings?
   slates DailySlate[]
   editorialRuns EditorialRun[]
+  youtube YouTubeConnection?
+  oauthStates YouTubeOAuthState[]
+  publications YouTubePublication[]
+  campaigns Campaign[]
+}
+
+model YouTubeConnection {
+  id String @id @default(uuid())
+  userId String @unique
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId String
+  title String
+  avatar String?
+  subscribers String?
+  accessToken String
+  refreshToken String
+  expiresAt DateTime
+  state String @default("CONNECTED")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model YouTubeOAuthState {
+  id String @id
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  browserHash String
+  verifier String
+  expiresAt DateTime
+}
+
+model YouTubePublication {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortId String @unique
+  channelId String
+  renderKey String
+  renderHash String
+  bytes BigInt
+  metadata Json
+  publishAt DateTime
+  state String @default("PENDING")
+  sessionUrl String?
+  uploadedBytes BigInt @default(0)
+  videoId String? @unique
+  attempts Int @default(0)
+  nextAttemptAt DateTime @default(now())
+  errorMessage String?
+  lastVerifiedAt DateTime?
+  remoteStatus Json?
+  cancelRequested Boolean @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([state, nextAttemptAt])
+}
+
+model Campaign {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startDate String
+  endDate String
+  timezone String
+  createdAt DateTime @default(now())
+  @@unique([userId, startDate])
 }
 model Session {
   id String @id @default(uuid())

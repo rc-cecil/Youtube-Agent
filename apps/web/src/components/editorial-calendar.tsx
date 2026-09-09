@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, post } from '../api.js';
 import { CalendarDays, WandSparkles, ShieldCheck } from 'lucide-react';
 import { EditorialDisclosure } from './editorial-disclosure.js';
+import { YouTubePanel } from './youtube-panel.js';
 import {
   addDays,
   localDate,
@@ -147,8 +148,8 @@ export function EditorialCalendar() {
             </span>
           </div>
           <p>
-            Editorial reservations only. YouTube scheduling arrives in Phase 6. Times use{' '}
-            {settings.timezone}.
+            Reservations are not publications. Review and schedule them in YouTube publishing below.
+            Times use {settings.timezone}.
           </p>
           <div className="editorial-toolbar">
             <label>
@@ -367,6 +368,7 @@ export function EditorialCalendar() {
               Save editorial settings
             </button>
           </EditorialDisclosure>
+          <YouTubePanel date={date} timezone={settings.timezone} />
           <EditorialDisclosure title="Source distribution">
             {data.sources.map((s) => (
               <p key={s.id}>

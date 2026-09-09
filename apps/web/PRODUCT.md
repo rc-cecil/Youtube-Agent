@@ -12,9 +12,9 @@ Gameplay creators upload their original recordings and manage a reliable source 
 
 ## Capabilities and constraints
 
-Phases 1–5 include owner authentication, resumable uploads, rights acknowledgment, source metadata, storage, FFmpeg ingestion, proxy/activity analysis, game-specific and AI ranking, concept generation, versioned EDLs, Remotion preview/rendering, QC, manual review, and editorial slate planning with HERO-first selection and duplicate/diversity guards. All activity and statistics come from the API. Publishing, analytics, and learning are not implemented.
+Phases 1–6 include owner authentication, resumable source uploads, analysis/ranking, versioned EDLs, Remotion rendering and QC, editorial slate planning, secure YouTube connection, private resumable publication, scheduling, reconciliation, and campaigns. All states come from the API. Analytics and learning are not implemented.
 
-The user approved clearly labeled visual previews of future features. YouTube publishing remains an explanatory preview; editing, rendering and editorial reservation controls are real and owner-scoped. Existing working routes and security boundaries must remain intact.
+The user approved clearly labeled previews of future features. Publishing controls are real and owner-scoped; analytics remains an explanatory preview. Existing routes and security boundaries remain intact.
 
 ## Brand commitments
 
@@ -28,4 +28,4 @@ The existing Phase 1 application, architecture and verification documentation, t
 
 Preserve keyboard access, visible focus, descriptive errors, responsive layouts, readable contrast, and reduced-motion support. A decorative video must be muted and pausable. Keep the next real action easy to find, and distinguish future previews from available functions.
 
-Preview tabs are clearly labeled unavailable and never trigger scheduling or publishing. Live metrics, edit plans, render/QC states, and recording states originate from the API.
+Preview tabs are clearly labeled unavailable and never trigger analytics or learning. Live publication, edit, render/QC, and recording states originate from the API.

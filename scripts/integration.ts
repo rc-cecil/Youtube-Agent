@@ -25,6 +25,7 @@ import { planShorts } from '../apps/worker/src/plan-shorts.js';
 import { renderShort } from '../apps/renderer/src/render.js';
 import { processEditorialRun } from '../apps/worker/src/editorial.js';
 import { addDays, localDate } from '../packages/editorial/src/index.js';
+import { verifyYouTube } from './youtube-integration.js';
 import type { UploadView, SourceView } from '../packages/shared/src/index.js';
 
 const base = getConfig();
@@ -565,6 +566,17 @@ try {
   });
   assert.equal(slate.slots.length, 3);
   assert.equal(slate.slots.find((s) => s.role === 'HERO')?.shortId, planned.id);
+  await verifyYouTube(
+    db,
+    storage,
+    redis,
+    config,
+    owner,
+    other.cookie,
+    planned.id,
+    slate.slots.find((s) => s.role === 'HERO')!.id,
+    pass,
+  );
   assert.equal(slate.slots.filter((s) => !s.shortId).length, 2);
   assert.equal(
     (await db.shortFingerprint.findUniqueOrThrow({ where: { shortId: planned.id } })).frameHashes

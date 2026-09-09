@@ -1,35 +1,68 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-09-08T12:20:00Z",
+  "generatedAt": "2026-09-09T23:24:01Z",
   "title": "Design System: Shorts Studio",
   "extensions": {
     "motion": [
-      { "name": "duration-quick", "value": "150ms", "purpose": "Press and hover feedback" },
-      { "name": "duration-fast", "value": "250ms", "purpose": "Play/pause icon swap" },
-      { "name": "ease-smooth-out", "value": "cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Responsive state changes" }
+      {
+        "name": "press-feedback",
+        "value": "150ms",
+        "purpose": "Press feedback for deliberate actions."
+      },
+      {
+        "name": "state-feedback",
+        "value": "250ms",
+        "purpose": "State feedback and expanding disclosures."
+      }
     ],
     "breakpoints": [
       { "name": "compact-desktop", "value": "1180px" },
-      { "name": "stacked-panels", "value": "960px" },
       { "name": "mobile", "value": "760px" }
+    ],
+    "publicationRules": [
+      "Pair every status color with readable text.",
+      "Keep routine publication polling still.",
+      "Animate only deliberate action confirmation.",
+      "Suppress positional motion for reduced-motion preferences and keyboard interaction.",
+      "Treat live publication and recording states from the API as authoritative."
     ]
   },
   "components": [
     {
-      "name": "Primary button",
+      "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The next available workspace action.",
-      "html": "<button class='ds-primary'>Upload gameplay</button>",
-      "css": ".ds-primary{background:var(--primary);color:var(--primary-foreground);border:0;border-radius:8px;padding:10px 16px;min-height:42px;font:550 13px sans-serif;cursor:pointer}.ds-primary:hover{filter:brightness(1.08)}.ds-primary:focus-visible{outline:2px solid var(--ring);outline-offset:4px}"
+      "description": "The next available workspace action, using dark text on lime.",
+      "html": "<button class=\"ds-primary\">Upload gameplay</button>",
+      "css": ".ds-primary{min-height:44px;padding:10px 16px;border:0;border-radius:8px;background:#d3ef7a;color:#111315;font:550 13px 'Geist Variable',sans-serif;cursor:pointer}.ds-primary:focus-visible{outline:2px solid #d3ef7a;outline-offset:4px}"
+    },
+    {
+      "name": "Publication Status",
+      "kind": "chip",
+      "refersTo": "publication-status",
+      "description": "A text-first status label whose color supports, but never replaces, its meaning.",
+      "html": "<span class=\"ds-publication-status\">scheduled</span>",
+      "css": ".ds-publication-status{display:inline-flex;padding:3px 8px;border:1px solid currentColor;border-radius:999px;color:#d3ef7a;background:transparent;font:550 11px 'Geist Variable',sans-serif;transition:none}"
     }
   ],
   "narrative": {
     "northStar": "The source-footage desk",
-    "overview": "Graphite surfaces, readable type, and lime actions.",
-    "keyCharacteristics": ["Single supplied-media focal point", "Compact operational screens", "Explicit future-feature boundaries"],
+    "overview": "Graphite surfaces, readable type, and lime actions. The supplied gaming video is the dashboard's single focal image; operational pages remain compact and task-focused.",
+    "keyCharacteristics": [
+      "Single supplied-media focal point",
+      "Compact operational screens",
+      "Semantic, text-supported status",
+      "Purposeful and suppressible motion"
+    ],
     "rules": [],
-    "dos": ["Preserve semantic tokens and visible focus."],
-    "donts": ["Do not render duplicate Efferd demo dashboards or fabricated metrics."]
+    "dos": [
+      "Preserve semantic tokens, visible focus, readable labels, and responsive source rows.",
+      "Keep supplied video separate from uploaded source media and preserve its provenance."
+    ],
+    "donts": [
+      "Do not render retained Efferd demos as additional dashboards or heroes.",
+      "Do not introduce fabricated metrics or enable future processing through preview controls.",
+      "Do not animate routine polling updates or make animation a prerequisite for an action."
+    ]
   }
 }

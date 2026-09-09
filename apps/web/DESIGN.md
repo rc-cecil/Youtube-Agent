@@ -66,9 +66,9 @@ Controls have compact rounded corners; panels and media use progressively larger
 
 Shadcn/Radix primitives provide buttons, fields, alerts, badges, empty states, skeletons, and accessible preview tabs. Primary buttons use dark text on lime. Controls have visible focus outlines; icon buttons have 44px targets.
 
-Motion uses shared CSS tokens: 150ms press feedback, 250ms icon swaps, and a 500ms upload-success entrance. Reduced-motion preferences and keyboard interaction suppress nonessential CSS animation. The video is muted and pausable; reduced motion and data saving prevent automatic source assignment. Off-screen and background playback pauses.
+Motion uses shared CSS tokens: 150ms press feedback, 250ms state feedback and expanding disclosures. Publication polling stays still; only deliberate action confirmation enters. Reduced-motion preferences and keyboard interaction suppress positional motion. The video is muted and pausable; reduced motion and data saving prevent automatic source assignment. Off-screen and background playback pauses.
 
-Preview tabs are clearly labeled unavailable and never trigger analysis, editing, or publishing. Live metrics and recording states originate from the API.
+Preview tabs are clearly labeled unavailable and never trigger analytics or learning. Live publication and recording states originate from the API.
 
 ## Do's and Don'ts
 

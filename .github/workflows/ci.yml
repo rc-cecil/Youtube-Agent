@@ -1,4 +1,4 @@
-name: Phase 5 checks
+name: Phase 6 checks
 on: [push, pull_request]
 jobs:
   verification:

@@ -12,6 +12,17 @@ export async function invalidateSlates(
   userId: string,
   shortId?: string,
 ) {
+  const publications = await tx.youTubePublication.findMany({
+    where: { userId, state: { not: 'CANCELLED' } },
+    select: { shortId: true },
+  });
+  const frozen = publications.map((p) => p.shortId);
+  if (shortId && frozen.includes(shortId))
+    throw new AppError(
+      409,
+      'PUBLICATION_LOCKED',
+      'Cancel and verify the YouTube schedule before changing this Short.',
+    );
   if (
     shortId &&
     !(await tx.slateSlot.findFirst({
@@ -20,7 +31,11 @@ export async function invalidateSlates(
   )
     return;
   const slots = await tx.slateSlot.findMany({
-    where: { slate: { userId }, plannedAt: { gt: new Date() }, shortId: { not: null } },
+    where: {
+      slate: { userId },
+      plannedAt: { gt: new Date() },
+      shortId: { not: null, notIn: frozen },
+    },
   });
   await tx.generatedShort.updateMany({
     where: { userId, id: { in: slots.flatMap((s) => (s.shortId ? [s.shortId] : [])) } },

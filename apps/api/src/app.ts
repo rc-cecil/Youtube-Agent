@@ -22,8 +22,15 @@ import {
 } from './auth.js';
 import { UploadService } from './uploads.js';
 import { registerEditorial, invalidateSlates } from './editorial.js';
+import { registerYouTube } from './youtube.js';
 
-export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis, config: Config) {
+export async function buildApp(
+  db: PrismaClient,
+  storage: Storage,
+  redis: Redis,
+  config: Config,
+  youtubeTransport: typeof fetch = fetch,
+) {
   const app = Fastify({
     logger: {
       level: config.LOG_LEVEL,
@@ -39,6 +46,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
   const requireAuth = authentication(db),
     uploads = new UploadService(db, storage, config);
   registerEditorial(app, db, config);
+  registerYouTube(app, db, config, youtubeTransport);
   const dummyHash = await hashPassword(newToken());
   const cookieOptions = {
     httpOnly: true,
@@ -124,7 +132,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 5,
+    phase: 6,
     storage: config.STORAGE_PROVIDER,
     aiMode: config.AI_MODE,
     aiModel:
@@ -795,7 +803,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       services: { database, redis: redisStatus, storage: storageStatus, worker, renderer },
       heartbeat,
       rendererHeartbeat,
-      phase: 5,
+      phase: 6,
     };
   });
   return app;

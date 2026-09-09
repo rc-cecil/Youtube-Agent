@@ -1,15 +1,15 @@
-import { UploadCloud, LockKeyhole, ArrowRight } from 'lucide-react';
+import { BarChart3, LockKeyhole, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const previews = [
   {
-    title: 'Publish to YouTube',
-    icon: UploadCloud,
-    text: 'A future publishing workspace for secure channel connection, scheduling, and upload reconciliation.',
-    action: 'Phase 6 publishing',
-    stages: ['Connect channel', 'Schedule privately', 'Verify publication'],
+    title: 'Understand your performance',
+    icon: BarChart3,
+    text: 'A future analytics workspace for verified performance snapshots and learning from published Shorts.',
+    action: 'Phase 7 analytics',
+    stages: ['Collect snapshots', 'Compare performance', 'Learn from results'],
   },
 ] as const;
 
@@ -52,7 +52,7 @@ export function FuturePreview() {
                 <LockKeyhole data-icon="inline-start" />
                 Planned feature
               </Button>
-              <span>No scheduling or publishing occurs in this preview.</span>
+              <span>No analytics collection or strategy learning occurs in this preview.</span>
             </div>
           </TabsContent>
         ))}

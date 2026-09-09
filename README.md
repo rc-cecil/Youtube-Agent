@@ -1,6 +1,6 @@
 # AI Gameplay Shorts Agent
 
-A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–5 are implemented**, including the foundation, analysis, AI ranking, Remotion editing/rendering, QC, review, and editorial intelligence. The [master specification](docs/master-specification.md) is the source of truth; the [architecture plan](docs/architecture.md) maps the full product.
+A creator workspace for turning uploaded gameplay into scheduled YouTube Shorts. **Phases 1–6 are implemented**, including the foundation, analysis, AI ranking, Remotion editing/rendering, QC, editorial intelligence, and YouTube publishing. The [master specification](docs/master-specification.md) is the source of truth; the [architecture plan](docs/architecture.md) maps the full product.
 
 ## What works now
 
@@ -18,8 +18,10 @@ A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–5 ar
 
 - Daily editorial slates with protected HERO selection, distinct Discovery/Engagement roles, source distribution, global duplicate prevention, frame fingerprints, explicit related-edit exceptions, and a 7/30-day calendar.
 - Durable editorial requests with leased execution, three bounded attempts, restart recovery, settings snapshots, owner locks, and unique Short reservations. Optional rolling editorial plans cover 3–7 days.
+- Google OAuth with PKCE, browser-bound single-use state, encrypted tokens, channel identity, refresh/reconnect/revoke handling, and live mode disabled by default.
+- Explicit private resumable YouTube uploads, audience/synthetic-media declarations, UTC scheduling, saved remote video IDs, reconciliation, cancellation verification, retry controls, and 30-day/90-slot campaigns.
 
-For a source, **READY** means ingestion, analysis, and ranking completed. For a Short, **READY** means its vertical artifact passed QC. Calendar assignments are editorial reservations, not YouTube publication schedules. `AI_MODE=mock` is a labeled deterministic development fixture. Configure `AI_MODE=openai`, `OPENAI_API_KEY`, `AI_VISION_MODEL`, and optionally `AI_REASONING_MODEL` for live analysis/planning. `AI_EMBEDDING_MODEL` enables cached learned semantic embeddings for editorial comparisons; without it, the documented lexical fallback is used. YouTube integration begins in Phase 6; analytics and learning follow later.
+For a source, **READY** means ingestion, analysis, and ranking completed. For a Short, **READY** means its vertical artifact passed QC. Calendar assignments remain editorial reservations until an explicit publication request is accepted. `AI_MODE=mock` and `YOUTUBE_MODE=mock` perform no provider calls. Live YouTube requires `YOUTUBE_MODE=live`, Google OAuth credentials, an exact callback URL, and a stable 32-byte encryption key. Analytics and learning follow later.
 
 ## Quick start with Docker
 
@@ -91,7 +93,7 @@ npm run test:integration
 Remove-Item Env:DATABASE_URL
 ```
 
-GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux and installs Remotion's compatible Headless Shell. See [Phase 5 verification](docs/phase-5-verification.md) for local results and remaining environment-specific checks.
+GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux and installs Remotion's compatible Headless Shell. See [Phase 6 verification](docs/phase-6-verification.md) for local results and limitations.
 
 ## Production build and deployment boundary
 
@@ -106,4 +108,4 @@ Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is 
 
 The Compose file is a local development environment, not an internet deployment. Resource quotas, backups, alerts, infrastructure secrets and the target S3 bucket must be provisioned before exposure. The container build is supplied but could not be executed here because Docker is unavailable; native production outputs were built and checked.
 
-See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-5-verification.md). Implementation stops at Phase 5.
+See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-6-verification.md). Implementation stops at Phase 6.

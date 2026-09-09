@@ -1,4 +1,4 @@
-# Phase 5 REST contract
+# Phase 6 REST contract
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 
@@ -49,6 +49,21 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 
 ## Upload protocol
 
+## YouTube endpoints
+
+| Method and path                         | Behavior                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------ |
+| `GET /youtube`                          | Sanitized channel, future reserved slots, publications, and campaigns                |
+| `POST /youtube/connect`                 | Creates browser-bound PKCE state and returns Google's authorization URL              |
+| `GET /youtube/callback`                 | Consumes state once, exchanges code, reads channel, encrypts credentials, redirects  |
+| `POST /youtube/disconnect`              | Revokes access, removes credentials; existing remote schedules remain                |
+| `POST /youtube/publications`            | Explicit QC/rights/review preflight and idempotent private upload request for a slot |
+| `POST /youtube/publications/:id/retry`  | Reconcile or resume a nonterminal publication                                        |
+| `POST /youtube/publications/:id/cancel` | Request remote schedule removal and verification                                     |
+| `POST /youtube/campaigns`               | Create a 30-day campaign and missing editorial planning requests                     |
+
+Provider URLs, access/refresh tokens, encrypted upload sessions, raw remote errors, and credentials are never returned. Active publication media and metadata are locked until cancellation is remotely verified. A 202 response means durable local acceptance, not successful upload or publication.
+
 1. Initiate with the actual filename, matching supported MIME, total bytes, and rights acknowledgment. IDs and paths are server-generated.
 2. Divide the original into `chunkBytes` parts. The final part may be smaller. A retransmission with the same hash succeeds; changed bytes at the same index produce `PART_CONFLICT`.
 3. On reconnect, GET the session and reselect the original file. The browser hashes each previously uploaded part before skipping it. A filename, size, or hash mismatch requires the original file or a fresh upload.
@@ -59,4 +74,4 @@ After ranking, planning creates three concepts per configured finalist and compi
 
 Finalization streams large files and may take time. Proxies permit a 15-minute finalization response; chunk requests are bounded at 16 MiB. Expired sessions cannot accept data. Original downloads stream without loading the file into memory.
 
-Every private lookup is owner-filtered, including derived assets, scores, concepts, EDLs, renders, media, review decisions, overrides, downloads, and retries. Someone else's resource returns 404. A Short cannot be approved until its newest render has passed QC. Rerendering resets approval to PENDING. Server infrastructure settings and account provisioning are environment/CLI operations. Phase 4 exposes no registration, password recovery, Google OAuth, scheduling, or publication endpoints.
+Every private lookup is owner-filtered, including derived assets, scores, concepts, EDLs, renders, media, review decisions, overrides, downloads, retries, OAuth state, channel credentials, publications, and campaigns. Someone else's resource returns 404. A Short cannot be approved until its newest render has passed QC. Rerendering resets approval to PENDING. Server infrastructure settings and account provisioning are environment/CLI operations. The application exposes no public registration or password-recovery endpoints; Phase 6 adds authenticated Google OAuth, scheduling, and publication endpoints only.

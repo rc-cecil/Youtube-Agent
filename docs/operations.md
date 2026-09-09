@@ -1,4 +1,4 @@
-# Phase 5 operations
+# Phase 6 operations
 
 ## Editorial planning
 
@@ -58,7 +58,9 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `LOG_LEVEL`                                            | Structured log level                            |
 | `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
 
-Reserved later-phase variables in `.env.example` include the fast/transcription OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
+`YOUTUBE_MODE=mock` disables all provider calls. For live mode, enable the YouTube Data API, configure a Web OAuth client, register the exact `APP_URL/api/youtube/callback` redirect, then set `YOUTUBE_MODE=live`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a stable `YOUTUBE_TOKEN_KEY` containing 32 random bytes as 64 hex characters. Losing that key makes saved tokens and resumable sessions unrecoverable. Never expose it to the browser or rotate it without a credential migration.
+
+The worker polls publication records every ten seconds. It starts an official private resumable upload, persists the session, probes the acknowledged range before every chunk, schedules only after receiving a video ID, and verifies remote state. Five bounded attempts use provider Retry-After or exponential delay. `NEEDS_ATTENTION` requires an operator; reconnect authorization or inspect YouTube Studio before retrying. `MISSED` records a passed slot rather than silently changing its time. Disconnect does not cancel remote schedules.
 
 ## Recovery
 

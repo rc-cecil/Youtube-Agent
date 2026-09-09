@@ -40,6 +40,13 @@ const schema = z.object({
   ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(12),
   PROXY_MAX_WIDTH: z.coerce.number().int().min(320).max(1920).default(720),
   AI_MODE: z.enum(['mock', 'openai']).default('mock'),
+  GOOGLE_CLIENT_ID: z.string().default(''),
+  YOUTUBE_MODE: z.enum(['mock', 'live']).default('mock'),
+  GOOGLE_CLIENT_SECRET: z.string().default(''),
+  YOUTUBE_TOKEN_KEY: z
+    .string()
+    .default('')
+    .refine((v) => !v || /^[0-9a-fA-F]{64}$/.test(v), 'Use a 32-byte hex encryption key'),
   AI_EMBEDDING_MODEL: z
     .string()
     .optional()

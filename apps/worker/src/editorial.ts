@@ -210,6 +210,24 @@ export async function processEditorialRun(
         const times = settings.postingTimes.map((time) =>
           slotInstant(run.localDate, time, settings.timezone),
         );
+        const reserved = await tx.slateSlot.findMany({
+          where: {
+            slate: { userId: run.userId, localDate: run.localDate },
+            shortId: { not: null },
+          },
+        });
+        if (
+          await tx.youTubePublication.findFirst({
+            where: {
+              userId: run.userId,
+              shortId: { in: reserved.flatMap((s) => (s.shortId ? [s.shortId] : [])) },
+              state: { not: 'CANCELLED' },
+            },
+          })
+        )
+          throw new Error(
+            'This day has YouTube publications. Cancel and verify them before replanning.',
+          );
         if (times[0]! <= new Date())
           throw new Error('Daily planning must finish before the first slot. Select a future day.');
         const review = await tx.shortCreationSettings.findUnique({ where: { userId: run.userId } });

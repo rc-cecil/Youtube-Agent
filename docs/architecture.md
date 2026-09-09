@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–5 were implemented sequentially under explicit user authorization; later phases remain design-only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–6 were implemented sequentially under explicit user authorization; later phases remain design-only.
 
 ## 1. Existing architecture assessment
 
@@ -8,7 +8,7 @@ The repository `rc-cecil/Youtube-Agent`, at baseline `dd3ce60`, contains only a 
 
 ## 2. Directory structure
 
-Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`; Phase 3 added `ai` and `game-detectors`; Phase 4 adds `apps/renderer` and `packages/remotion`. Later phases add YouTube, analytics, scheduling, and learning packages; do not create pretend implementations now.
+Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`; Phase 3 added `ai` and `game-detectors`; Phase 4 added `apps/renderer` and `packages/remotion`; Phase 5 added `editorial`; Phase 6 adds `youtube`. Later phases add analytics and learning packages.
 
 ## 3. Database schema plan
 
@@ -56,9 +56,11 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Phase 5 is implemented under explicit authorization. Stop before Phase 6.**
+**Phase 6 is implemented under explicit authorization. Stop before Phase 7.**
 
 Phase 5 extends this architecture as described in [the editorial implementation plan](phase-5-plan.md). `DailySlate`, `SlateSlot`, `EditorialSettings`, `ShortFingerprint`, and independent `EditorialRun` records support source-independent planning. The worker claims durable PostgreSQL requests with a renewable lease, fences attempts, and commits under owner/candidate locks. Existing BullMQ media/render queues are retained. The calendar expresses editorial reservations, never external publication state.
+
+Phase 6 adds encrypted `YouTubeConnection`, browser-bound `YouTubeOAuthState`, immutable-media `YouTubePublication`, and `Campaign` records. The API snapshots approved QC media and metadata under the owner lock. The worker advances one resumable or reconciliation step at a time, probes saved sessions after uncertainty, stores video IDs, and distinguishes uploaded, processing, scheduled, published, missed, cancelled, and needs-attention states. Live provider calls require explicit configuration; tests inject a closed mocked transport.
 
 ## 10. Known risks and decisions
 

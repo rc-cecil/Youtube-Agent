@@ -18,6 +18,7 @@ import { analyze } from './analyze.js';
 import { rankCandidates } from './rank.js';
 import { planShorts } from './plan-shorts.js';
 import { editorialTick } from './editorial.js';
+import { youtubeTick } from './youtube.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -77,12 +78,25 @@ const editorialInterval = setInterval(() => {
 }, 10000);
 void tick();
 logger.info('Media processing worker started');
+let youtubeTask: Promise<void> | undefined;
+let youtubeBusy = false;
+const youtubeInterval = setInterval(() => {
+  if (youtubeBusy) return;
+  youtubeBusy = true;
+  youtubeTask = youtubeTick(db, storage, config)
+    .catch(() => logger.error('YouTube reconciliation interrupted'))
+    .finally(() => {
+      youtubeBusy = false;
+    });
+}, 10000);
 let closing = false;
 async function close() {
   if (closing) return;
   closing = true;
   clearInterval(interval);
   clearInterval(editorialInterval);
+  clearInterval(youtubeInterval);
+  await youtubeTask;
   await editorialTask;
   await worker.close();
   await queue.close();
