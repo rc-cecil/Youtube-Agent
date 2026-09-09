@@ -1,22 +1,22 @@
-import { Captions, Scissors, LockKeyhole, ArrowRight } from 'lucide-react';
+import { CalendarDays, UploadCloud, LockKeyhole, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const previews = [
   {
-    title: 'Shape the Short',
-    icon: Scissors,
-    text: 'A future editing workspace for turning approved moments into vertical clips.',
-    action: 'Vertical editing',
-    stages: ['Approved moment', 'Vertical framing', 'Export review'],
+    title: 'Plan the daily slate',
+    icon: CalendarDays,
+    text: 'A future editorial workspace for diversity-aware DISCOVERY, ENGAGEMENT, and protected HERO selection.',
+    action: 'Phase 5 planning',
+    stages: ['Candidate pool', 'Diversity checks', 'Daily roles'],
   },
   {
-    title: 'Make it yours',
-    icon: Captions,
-    text: 'A future styling workspace for reviewing captions and presentation before export.',
-    action: 'Captions & styling',
-    stages: ['Clip selection', 'Caption styling', 'Preview & approve'],
+    title: 'Publish to YouTube',
+    icon: UploadCloud,
+    text: 'A future publishing workspace for secure channel connection, scheduling, and upload reconciliation.',
+    action: 'Phase 6 publishing',
+    stages: ['Connect channel', 'Schedule privately', 'Verify publication'],
   },
 ] as const;
 
@@ -59,7 +59,7 @@ export function FuturePreview() {
                 <LockKeyhole data-icon="inline-start" />
                 Planned feature
               </Button>
-              <span>No footage is analyzed or edited in this preview.</span>
+              <span>No scheduling or publishing occurs in this preview.</span>
             </div>
           </TabsContent>
         ))}

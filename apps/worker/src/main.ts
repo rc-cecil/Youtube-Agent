@@ -10,11 +10,13 @@ import {
   cleanUploads,
   backfillAnalysisJobs,
   backfillRankingJobs,
+  backfillShortPlanningJobs,
 } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 import { ingest } from './ingest.js';
 import { analyze } from './analyze.js';
 import { rankCandidates } from './rank.js';
+import { planShorts } from './plan-shorts.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -30,6 +32,7 @@ const worker = new Worker(
     if (record.kind === 'INGEST') return ingest(db, storage, config, record.id);
     if (record.kind === 'ANALYZE') return analyze(db, storage, config, record.id);
     if (record.kind === 'RANK') return rankCandidates(db, storage, config, record.id);
+    if (record.kind === 'PLAN') return planShorts(db, config, record.id);
     throw new Error(`Unsupported job kind: ${record.kind}`);
   },
   { connection, concurrency: config.WORKER_CONCURRENCY },
@@ -47,7 +50,8 @@ async function tick() {
     await db.$queryRaw`SELECT 1`;
     await backfillAnalysisJobs(db);
     await backfillRankingJobs(db);
-    await reconcileJobs(db, queue);
+    await backfillShortPlanningJobs(db);
+    await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
     if (cycles++ % 12 === 0) await cleanUploads(db, storage);
     await connection.set(HEARTBEAT, new Date().toISOString(), 'EX', 30);
   } catch (error) {

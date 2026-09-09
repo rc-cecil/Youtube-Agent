@@ -1,4 +1,4 @@
-# Phase 3 REST contract
+# Phase 4 REST contract
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 
@@ -20,10 +20,19 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 | `GET /sources/:id`              | Metadata, assets, analysis, candidates, jobs and failure history   |
 | `GET /sources/:id/download`     | Authenticated original-file stream                                 |
 | `GET /sources/:id/assets/:kind` | Authenticated `proxy` or `thumbnail` stream                        |
-| `POST /sources/:id/analyze`     | 202 serialized durable reanalysis job after ingestion              |
-| `PUT /sources/:id/game`         | Validated, audited game correction and serialized reranking        |
+| `POST /sources/:id/analyze`     | 202 serialized reanalysis before Shorts exist; 409 afterward       |
+| `PUT /sources/:id/game`         | Audited correction/reranking before Shorts exist; 409 afterward    |
 | `POST /sources/:id/retry`       | 202 retry of latest failed ingestion, analysis, or ranking stage   |
+| `POST /sources/:id/shorts`      | 202 serialized concept and EDL planning job                        |
 | `GET /analysis`                 | Ranked finalists, score evidence, cached token/cost usage          |
+| `GET /shorts`                   | Latest 100 owner-scoped generated Shorts and render state          |
+| `GET /shorts/:id`               | Concepts, source/ranking evidence, EDL versions and render history |
+| `GET /shorts/:id/media`         | Private stream of the latest QC-approved MP4                       |
+| `POST /shorts/:id/render`       | 202 durable rerender job using the latest validated EDL            |
+| `PATCH /shorts/:id/metadata`    | Version title, description and 1–6 validated hashtags              |
+| `POST /shorts/:id/review`       | Approve a READY Short or reject a generated Short                  |
+| `GET /settings/shorts`          | Short thresholds, future autopilot flag, preferred/banned tags     |
+| `PATCH /settings/shorts`        | Validate and save all Short creation guardrails                    |
 | `GET /jobs`                     | Latest 100 jobs for the current user's sources                     |
 | `GET /dashboard`                | Actual source counts, bytes, duration and recent recordings        |
 | `GET /health/live`              | Public process liveness only                                       |
@@ -37,6 +46,8 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 4. Complete after every part is present. Under a row lock, the API streams and rehashes stored parts, writes the original, and commits SourceVideo, VideoAsset, and PENDING JobRun. This does not wait for the worker. Concurrent completion cannot create duplicate jobs. If the response was lost, GET exposes `sourceId` and another completion returns it.
 5. Poll the source or jobs. The worker validates the actual container, codec, dimensions, duration, frame rate, and full decodability; creates a review proxy; analyzes scene, motion, loudness, peaks, and silence; enriches candidates with a game adapter; and samples three frames per finalist for ranking. `hasAudio=false` is valid. Invalid media or ranking failures end in FAILED with concise details and can restart at the failed stage.
 
+After ranking, planning creates three concepts per configured finalist and compiles the selected option into a validated EDL. Each generated Short commits a separate durable render intent. The renderer—not the API—bundles the composition, writes a private MP4, and marks it READY only after QC. The browser preview uses the same declarative component and source proxy while final media remains owner-authenticated.
+
 Finalization streams large files and may take time. Proxies permit a 15-minute finalization response; chunk requests are bounded at 16 MiB. Expired sessions cannot accept data. Original downloads stream without loading the file into memory.
 
-Every private lookup is owner-filtered, including derived assets, scores, overrides, downloads, and retries. Someone else's resource returns 404. Server settings and account provisioning are environment/CLI operations. Phase 3 exposes no registration, password recovery, Google OAuth, rendering, scheduling, or publication endpoints.
+Every private lookup is owner-filtered, including derived assets, scores, concepts, EDLs, renders, media, review decisions, overrides, downloads, and retries. Someone else's resource returns 404. A Short cannot be approved until its newest render has passed QC. Rerendering resets approval to PENDING. Server infrastructure settings and account provisioning are environment/CLI operations. Phase 4 exposes no registration, password recovery, Google OAuth, scheduling, or publication endpoints.

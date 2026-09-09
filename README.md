@@ -1,19 +1,22 @@
 # AI Gameplay Shorts Agent
 
-A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–3 are implemented: foundation, ingestion, deterministic gameplay analysis, game-specific adapters, and explainable AI candidate ranking.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
+A creator workspace for turning uploaded gameplay into Shorts. **Phases 1–4 are implemented: foundation, ingestion, gameplay analysis, game-aware AI ranking, concept/EDL planning, vertical Remotion rendering, QC, preview, and manual review.** The [master specification](docs/master-specification.md) is the source of truth; the [Section 78 architecture plan](docs/architecture.md) maps the full product and its implementation phases.
 
 ## What works now
 
-- React/TypeScript dashboard, uploads, searchable source library, analysis workspace, source details, job queue, system health and configuration view.
+- React/TypeScript dashboard, uploads, searchable source library, analysis workspace, Shorts list/detail with shared Remotion preview, job queue, system health and configuration views.
 - Provisioned user accounts, salted password hashing, expiring database sessions, HttpOnly cookies, origin checks, rate limiting and per-owner access control.
 - Resumable MP4/MOV/WebM uploads with configurable size limits, immutable hashed parts, rights acknowledgment, idempotent finalization and cleanup.
-- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion, analysis, and ranking jobs with durable dispatch, bounded retries, progress and failure history.
+- PostgreSQL/Prisma persistence with committed migrations; Redis/BullMQ ingestion, analysis, planning, and isolated rendering queues with durable dispatch, bounded retries, progress and failure history.
 - Original-file storage through local and S3/R2 adapters, ffprobe metadata extraction and full FFmpeg decode validation in a separate worker.
 - Bounded H.264/AAC review proxies and thumbnails, streamed scene/motion/audio analysis, silence detection, and candidate windows with setup/payoff context.
 - FC, GTA, Call of Duty, and Fortnite signal adapters with a low-confidence generic fallback; sampled finalist frames; schema-validated 15-dimension highlight scores; audited game overrides that trigger reranking.
 - A pluggable ranking provider: explicitly labeled deterministic mock mode by default, or live OpenAI multimodal analysis when credentials and a model are configured. Content hashes cache unchanged results; token usage and configurable cost estimates are persisted and shown.
+- Three editorial concepts per finalist, truthful hook/title/hashtag planning, content-driven cuts with measured dead-air removal, and immutable schema-validated EDL versions.
+- Reusable 1080×1920 Remotion compositions with six crop strategies, tracked framing data, selective captions, hard cuts, zoom/freeze/replay/overlays, audio ducking, and original-audio preservation.
+- A dedicated renderer with loudness normalization, full output decode, resolution/duration/audio/boundary/safe-text/rights/metadata QC, private output storage, rerender history, and manual approve/reject controls.
 
-**READY means ingestion, local signal analysis, and Phase 3 ranking completed.** Mock mode is a development fixture: it scores measured activity and never pretends to have understood frame content. Set `AI_MODE=openai`, `OPENAI_API_KEY`, and `AI_VISION_MODEL` for live visual interpretation. Remotion, YouTube, scheduling, analytics, and learning remain later phases.
+For a source, **READY** means ingestion, local analysis, and ranking completed. For a Short, **READY** means a 1080×1920 artifact passed Phase 4 QC. Mock mode is a development fixture and never pretends to understand unseen content. Set `AI_MODE=openai`, `OPENAI_API_KEY`, `AI_VISION_MODEL`, and optionally `AI_REASONING_MODEL` for live analysis/planning. Daily slate intelligence, YouTube, scheduling, analytics, and learning remain later phases.
 
 ## Quick start with Docker
 
@@ -26,7 +29,7 @@ Requires Docker Engine/Desktop with Compose. Bindings are localhost-only; the Co
    docker compose --profile app up --build -d
    ```
 
-   PostgreSQL and Redis health checks run first; the migration service must succeed before the API and worker start. FFmpeg is included in the application image. Original assets and databases use named volumes.
+   PostgreSQL and Redis health checks run first; the migration service must succeed before the API, worker, and renderer start. FFmpeg and Chromium are included in the image. Original/rendered assets and databases use named volumes.
 
 3. Provision your account:
 
@@ -38,7 +41,7 @@ Requires Docker Engine/Desktop with Compose. Bindings are localhost-only; the Co
 
 4. Open **http://localhost:5173**, sign in, and upload footage you own or have permission to publish. Follow the recording from Queued → Validating → Analyzing → Ready. A malformed recording becomes Failed with an actionable message.
 
-Logs: `docker compose logs -f api worker`. Stop services with `docker compose --profile app down`; named volumes remain. Do not add `--volumes` unless you intend to erase local databases and media.
+Logs: `docker compose logs -f api worker renderer`. Stop services with `docker compose --profile app down`; named volumes remain. Do not add `--volumes` unless you intend to erase local databases and media.
 
 ## Native development
 
@@ -47,6 +50,7 @@ Requires Node.js 22.12+, PostgreSQL, Redis 7.4-compatible service, and FFmpeg/ff
 ```sh
 docker compose up -d postgres redis
 npm ci
+npx remotion browser ensure
 npm run db:generate
 npm run db:migrate
 npm run user:create
@@ -55,7 +59,7 @@ npm run dev
 
 Copy `.env.example` first. `user:create` reads the account values described above. Open **http://localhost:5173** (use that hostname to match `APP_URL`; if you use `127.0.0.1`, change `APP_URL` too). The Vite proxy keeps browser requests same-origin. The default `AI_MODE=mock` needs no external credentials. For live ranking, configure the three OpenAI variables above; optional per-million-token price variables make the displayed cost an explicit estimate rather than an invented value.
 
-Run services individually with `npm run dev:api`, `npm run dev:worker`, and `npm run dev:web`. The API defaults to `127.0.0.1:3001`. If its port changes, set `API_PROXY_TARGET` when starting Vite. Use `npm run db:dev -- --name change_name` to create a development migration; `db:migrate` applies committed migrations.
+Run services individually with `npm run dev:api`, `npm run dev:worker`, `npm run dev:renderer`, and `npm run dev:web`. The API defaults to `127.0.0.1:3001`. If its port changes, set `API_PROXY_TARGET` when starting Vite. `npm run remotion:studio` creates a local two-second fixture and opens the composition. Use `npm run db:dev -- --name change_name` to create a development migration; `db:migrate` applies committed migrations.
 
 ### Current Windows workspace
 
@@ -68,6 +72,8 @@ npm run typecheck
 npm run lint
 npm run format:check
 npm test
+npm run test:integration
+npm run test:render
 npm run build
 ```
 
@@ -82,7 +88,7 @@ npm run test:integration
 Remove-Item Env:DATABASE_URL
 ```
 
-GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux. See [Phase 3 verification](docs/phase-3-verification.md) for actual local results and remaining environment-specific checks. There is no Remotion Studio command yet; compositions and render tests are Phase 4.
+GitHub Actions defines the same gate against PostgreSQL and Redis services on Linux and installs Remotion's compatible Headless Shell. See [Phase 4 verification](docs/phase-4-verification.md) for actual local results and remaining environment-specific checks.
 
 ## Production build and deployment boundary
 
@@ -90,10 +96,11 @@ GitHub Actions defines the same gate against PostgreSQL and Redis services on Li
 npm run build
 npm run start:api
 npm run start:worker
+npm run start:renderer
 ```
 
 Serve `apps/web/dist` behind a same-origin reverse proxy; `infra/nginx.conf` is the supplied example. Set `NODE_ENV=production`, an HTTPS `APP_URL`, real database/storage credentials, `AI_MODE=openai`, an OpenAI API key/model, and TLS at ingress. Production configuration rejects HTTP origins and development mock ranking, and uses Secure cookies. Keep PostgreSQL and Redis private. Backend secrets are never sent to the frontend.
 
 The Compose file is a local development environment, not an internet deployment. Resource quotas, backups, alerts, infrastructure secrets and the target S3 bucket must be provisioned before exposure. The container build is supplied but could not be executed here because Docker is unavailable; native production outputs were built and checked.
 
-See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-3-verification.md). Implementation intentionally stops at Phase 3.
+See [.env.example](.env.example), [API contract](docs/api.md), [operations runbook](docs/operations.md), [architecture](docs/architecture.md), and [verification results](docs/phase-4-verification.md). Implementation intentionally stops at Phase 4.

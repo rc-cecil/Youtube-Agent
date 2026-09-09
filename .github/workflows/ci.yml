@@ -1,4 +1,4 @@
-name: Phase 3 checks
+name: Phase 4 checks
 on: [push, pull_request]
 jobs:
   verification:
@@ -26,9 +26,11 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
       - run: npm run db:generate
+      - run: npx remotion browser ensure
       - run: npm run db:migrate
       - run: npm run typecheck
       - run: npm run lint
       - run: npm test
       - run: npm run test:integration
+      - run: npm run test:render
       - run: npm run build

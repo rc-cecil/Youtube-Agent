@@ -8,7 +8,8 @@ import { z, ZodError } from 'zod';
 import type { Config } from '../../../packages/config/src/index.js';
 import type { Storage } from '../../../packages/storage/src/index.js';
 import { AppError, loginInput, sourceStates } from '../../../packages/shared/src/index.js';
-import { HEARTBEAT } from '../../../packages/jobs/src/index.js';
+import { HEARTBEAT, RENDER_HEARTBEAT } from '../../../packages/jobs/src/index.js';
+import { validateEditDecisionList } from '../../../packages/remotion/src/public.js';
 import { supportedGames } from '../../../packages/video-analysis/src/game-identification.js';
 import { detectorForGame } from '../../../packages/game-detectors/src/index.js';
 import {
@@ -121,11 +122,15 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 3,
+    phase: 4,
     storage: config.STORAGE_PROVIDER,
     aiMode: config.AI_MODE,
     aiModel:
       config.AI_MODE === 'openai' ? config.AI_VISION_MODEL : 'deterministic-ranking-fixture-v1',
+    planningModel:
+      config.AI_MODE === 'openai'
+        ? (config.AI_REASONING_MODEL ?? config.AI_VISION_MODEL)
+        : 'deterministic-short-planner-v1',
   }));
   app.post('/api/uploads', { preHandler: requireAuth }, async (req, reply) => {
     const upload = await uploads.create(req.userId, req.body);
@@ -197,6 +202,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
           analysis: true,
           gameDetection: true,
           _count: { select: { candidates: true } },
+          shorts: { select: { id: true, state: true, reviewState: true, title: true } },
         },
       }),
       db.sourceVideo.count({ where }),
@@ -218,6 +224,13 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
             include: { score: true, detectedEvent: true },
           },
           assets: { select: { kind: true, bytes: true } },
+          shorts: {
+            orderBy: { createdAt: 'desc' },
+            include: {
+              selectedConcept: true,
+              renders: { orderBy: { createdAt: 'desc' }, take: 1 },
+            },
+          },
         },
       });
       if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
@@ -306,10 +319,17 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
         await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const source = await tx.sourceVideo.findFirst({
           where: { id: req.params.id, userId: req.userId },
+          include: { _count: { select: { shorts: true } } },
         });
         if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
         if (!source.duration)
           throw new AppError(409, 'NOT_INGESTED', 'The source must pass ingestion before analysis');
+        if (source._count.shorts)
+          throw new AppError(
+            409,
+            'SHORTS_EXIST',
+            'Analysis is locked after Shorts are generated so their source evidence remains stable.',
+          );
         const active = await tx.jobRun.findFirst({
           where: {
             sourceId: source.id,
@@ -327,6 +347,258 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
       return reply.code(202).send(analysisJob);
     },
   );
+  app.post<{ Params: { id: string } }>(
+    '/api/sources/:id/shorts',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const job = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
+        const source = await tx.sourceVideo.findFirst({
+          where: { id: req.params.id, userId: req.userId },
+          include: {
+            candidates: { where: { score: { isNot: null } }, take: 1 },
+            shorts: { take: 1 },
+          },
+        });
+        if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
+        if (!source.candidates.length)
+          throw new AppError(
+            409,
+            'NOT_RANKED',
+            'Ranked highlights are required before short planning',
+          );
+        if (source.shorts.length)
+          throw new AppError(
+            409,
+            'SHORTS_EXIST',
+            'This source already has generated Shorts. Open a Short to edit or re-render it.',
+          );
+        const active = await tx.jobRun.findFirst({
+          where: {
+            sourceId: source.id,
+            kind: 'PLAN',
+            state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
+          },
+        });
+        if (active) return active;
+        await tx.auditLog.create({
+          data: { userId: req.userId, action: 'SHORT_PLANNING_REQUESTED', resourceId: source.id },
+        });
+        return tx.jobRun.create({ data: { sourceId: source.id, kind: 'PLAN' } });
+      });
+      return reply.code(202).send(job);
+    },
+  );
+  app.get('/api/shorts', { preHandler: requireAuth }, async (req) => ({
+    shorts: await db.generatedShort.findMany({
+      where: { userId: req.userId, state: { not: 'ARCHIVED' } },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: {
+        source: { select: { filename: true, width: true, height: true, hasAudio: true } },
+        selectedConcept: true,
+        renders: { orderBy: { createdAt: 'desc' }, take: 1, include: { job: true } },
+      },
+    }),
+  }));
+  app.get<{ Params: { id: string } }>(
+    '/api/shorts/:id',
+    { preHandler: requireAuth },
+    async (req) => {
+      const short = await db.generatedShort.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+        include: {
+          source: {
+            select: {
+              id: true,
+              filename: true,
+              width: true,
+              height: true,
+              hasAudio: true,
+              rightsAcknowledgedAt: true,
+            },
+          },
+          candidate: {
+            include: { score: true, detectedEvent: true, concepts: { orderBy: { key: 'asc' } } },
+          },
+          selectedConcept: true,
+          editPlans: { orderBy: { version: 'desc' } },
+          renders: {
+            orderBy: { createdAt: 'desc' },
+            include: { job: { include: { failures: true } } },
+          },
+        },
+      });
+      if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
+      return short;
+    },
+  );
+  app.get<{ Params: { id: string } }>(
+    '/api/shorts/:id/media',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const artifact = await db.renderArtifact.findFirst({
+        where: {
+          shortId: req.params.id,
+          short: { userId: req.userId },
+          state: 'READY',
+          storageKey: { not: null },
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!artifact?.storageKey)
+        throw new AppError(404, 'NOT_FOUND', 'No QC-approved render is available');
+      reply.type('video/mp4');
+      reply.header('Content-Disposition', 'inline');
+      if (artifact.bytes) reply.header('Content-Length', artifact.bytes.toString());
+      return reply.send(await storage.read(artifact.storageKey));
+    },
+  );
+  app.post<{ Params: { id: string } }>(
+    '/api/shorts/:id/render',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const artifact = await db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
+        const short = await tx.generatedShort.findFirst({
+          where: { id: req.params.id, userId: req.userId },
+          include: {
+            editPlans: { orderBy: { version: 'desc' }, take: 1 },
+            renders: { where: { state: { in: ['PENDING', 'RENDERING', 'QC'] } }, take: 1 },
+          },
+        });
+        if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
+        if (short.renders.length)
+          throw new AppError(409, 'RENDER_ACTIVE', 'A render is already active');
+        if (!short.editPlans[0])
+          throw new AppError(409, 'EDL_MISSING', 'A validated edit plan is required');
+        const job = await tx.jobRun.create({ data: { sourceId: short.sourceId, kind: 'RENDER' } });
+        await tx.generatedShort.update({
+          where: { id: short.id },
+          data: { state: 'EDIT_PLANNED', reviewState: 'PENDING' },
+        });
+        await tx.auditLog.create({
+          data: { userId: req.userId, action: 'SHORT_RENDER_REQUESTED', resourceId: short.id },
+        });
+        return tx.renderArtifact.create({
+          data: { shortId: short.id, editDecisionListId: short.editPlans[0].id, jobId: job.id },
+        });
+      });
+      return reply.code(202).send(artifact);
+    },
+  );
+  app.patch<{ Params: { id: string } }>(
+    '/api/shorts/:id/metadata',
+    { preHandler: requireAuth },
+    async (req) => {
+      const input = z
+        .object({
+          title: z.string().trim().min(1).max(100),
+          description: z.string().trim().max(500),
+          hashtags: z
+            .array(
+              z
+                .string()
+                .regex(/^#[A-Za-z0-9_]+$/)
+                .max(40),
+            )
+            .min(1)
+            .max(6),
+        })
+        .parse(req.body);
+      return db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
+        const short = await tx.generatedShort.findFirst({
+          where: { id: req.params.id, userId: req.userId },
+          include: { editPlans: { orderBy: { version: 'desc' }, take: 1 } },
+        });
+        if (!short?.editPlans[0])
+          throw new AppError(404, 'NOT_FOUND', 'Short or edit plan not found');
+        const edl = validateEditDecisionList({
+          ...(short.editPlans[0].document as object),
+          ...input,
+        });
+        const plan = await tx.editDecisionList.create({
+          data: {
+            shortId: short.id,
+            version: short.editPlans[0].version + 1,
+            schemaVersion: 1,
+            document: edl,
+            validatedAt: new Date(),
+          },
+        });
+        await tx.renderArtifact.updateMany({
+          where: { shortId: short.id, state: 'PENDING' },
+          data: { editDecisionListId: plan.id },
+        });
+        await tx.auditLog.create({
+          data: { userId: req.userId, action: 'SHORT_METADATA_UPDATED', resourceId: short.id },
+        });
+        return tx.generatedShort.update({ where: { id: short.id }, data: input });
+      });
+    },
+  );
+  app.post<{ Params: { id: string } }>(
+    '/api/shorts/:id/review',
+    { preHandler: requireAuth },
+    async (req) => {
+      const input = z.object({ decision: z.enum(['APPROVED', 'REJECTED']) }).parse(req.body);
+      const short = await db.generatedShort.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      });
+      if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
+      if (input.decision === 'APPROVED' && short.state !== 'READY')
+        throw new AppError(409, 'QC_REQUIRED', 'Only a QC-approved render can be approved');
+      await db.$transaction([
+        db.generatedShort.update({
+          where: { id: short.id },
+          data: { reviewState: input.decision },
+        }),
+        db.auditLog.create({
+          data: { userId: req.userId, action: `SHORT_${input.decision}`, resourceId: short.id },
+        }),
+      ]);
+      return { ok: true };
+    },
+  );
+  app.get('/api/settings/shorts', { preHandler: requireAuth }, async (req) =>
+    db.shortCreationSettings.upsert({
+      where: { userId: req.userId },
+      create: { userId: req.userId },
+      update: {},
+    }),
+  );
+  app.patch('/api/settings/shorts', { preHandler: requireAuth }, async (req) => {
+    const input = z
+      .object({
+        autopilotEnabled: z.boolean(),
+        minimumHighlightScore: z.number().int().min(0).max(100),
+        minimumConfidence: z.number().int().min(0).max(100),
+        minimumQualityScore: z.number().int().min(0).max(100),
+        preferredHashtags: z
+          .array(
+            z
+              .string()
+              .regex(/^#[A-Za-z0-9_]+$/)
+              .max(40),
+          )
+          .max(20),
+        bannedHashtags: z
+          .array(
+            z
+              .string()
+              .regex(/^#[A-Za-z0-9_]+$/)
+              .max(40),
+          )
+          .max(20),
+      })
+      .parse(req.body);
+    return db.shortCreationSettings.upsert({
+      where: { userId: req.userId },
+      create: { userId: req.userId, ...input },
+      update: input,
+    });
+  });
   app.put<{ Params: { id: string } }>(
     '/api/sources/:id/game',
     { preHandler: requireAuth },
@@ -336,9 +608,15 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
         await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const source = await tx.sourceVideo.findFirst({
           where: { id: req.params.id, userId: req.userId },
-          include: { analysis: true },
+          include: { analysis: true, _count: { select: { shorts: true } } },
         });
         if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
+        if (source._count.shorts)
+          throw new AppError(
+            409,
+            'SHORTS_EXIST',
+            'Game classification is locked after Shorts are generated so their edit plans remain valid.',
+          );
         const detectorProfile = detectorForGame(input.game, 1).profile;
         const detection = await tx.gameDetection.upsert({
           where: { sourceId: source.id },
@@ -428,7 +706,7 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
   }));
   app.get('/api/dashboard', { preHandler: requireAuth }, async (req) => {
     const where = { userId: req.userId };
-    const [total, ready, failed, processing, aggregate, recent, aiUsage, aiCalls] =
+    const [total, ready, failed, processing, aggregate, recent, aiUsage, aiCalls, shortsReady] =
       await Promise.all([
         db.sourceVideo.count({ where }),
         db.sourceVideo.count({ where: { ...where, status: 'READY' } }),
@@ -448,12 +726,14 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
           _sum: { inputTokens: true, outputTokens: true, estimatedCostUsd: true },
         }),
         db.aiResultCache.count({ where: { source: { userId: req.userId } } }),
+        db.generatedShort.count({ where: { userId: req.userId, state: 'READY' } }),
       ]);
     return {
       total,
       ready,
       failed,
       processing,
+      shortsReady,
       bytes: aggregate._sum.bytes ?? 0n,
       duration: aggregate._sum.duration ?? 0,
       recent,
@@ -482,15 +762,24 @@ export async function buildApp(db: PrismaClient, storage: Storage, redis: Redis,
     ]);
     const heartbeat =
       redisStatus === 'healthy' ? await redis.get(HEARTBEAT).catch(() => null) : null;
+    const rendererHeartbeat =
+      redisStatus === 'healthy' ? await redis.get(RENDER_HEARTBEAT).catch(() => null) : null;
     const worker =
       heartbeat && Date.now() - Date.parse(heartbeat) < 30_000 ? 'healthy' : 'unavailable';
-    const healthy = [database, redisStatus, storageStatus, worker].every((v) => v === 'healthy');
+    const renderer =
+      rendererHeartbeat && Date.now() - Date.parse(rendererHeartbeat) < 30_000
+        ? 'healthy'
+        : 'unavailable';
+    const healthy = [database, redisStatus, storageStatus, worker, renderer].every(
+      (v) => v === 'healthy',
+    );
     reply.code(healthy ? 200 : 503);
     return {
       status: healthy ? 'healthy' : 'degraded',
-      services: { database, redis: redisStatus, storage: storageStatus, worker },
+      services: { database, redis: redisStatus, storage: storageStatus, worker, renderer },
       heartbeat,
-      phase: 3,
+      rendererHeartbeat,
+      phase: 4,
     };
   });
   return app;

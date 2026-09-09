@@ -157,6 +157,33 @@ export type SourceView = {
   gameDetection?: GameDetectionView | null;
   candidates?: CandidateView[];
   assets?: { kind: string; bytes: string }[];
+  shorts?: ShortSummaryView[];
+};
+export type ShortSummaryView = {
+  id: string;
+  state: string;
+  reviewState: string;
+  title: string;
+  game?: string;
+  eventType?: string;
+  duration?: number;
+  qualityScore?: number;
+  sourceTimestamp?: number;
+  createdAt?: string;
+  selectedConcept?: { concept: string; hook: string; rationale: string };
+  source?: {
+    filename: string;
+    width: number | null;
+    height: number | null;
+    hasAudio: boolean | null;
+  };
+  renders?: Array<{
+    id: string;
+    state: string;
+    progress?: number;
+    qc?: Record<string, unknown> | null;
+    job?: JobView;
+  }>;
 };
 export type UploadView = {
   id: string;

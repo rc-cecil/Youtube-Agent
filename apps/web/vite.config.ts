@@ -18,5 +18,7 @@ export default defineConfig({
       },
     },
   },
-  build: { outDir: 'dist', emptyOutDir: true },
+  // Remotion is isolated in a lazy Short-detail chunk; keep the initial app bundle small while
+  // allowing the editor runtime to remain a single cacheable unit.
+  build: { outDir: 'dist', emptyOutDir: true, chunkSizeWarningLimit: 850 },
 });

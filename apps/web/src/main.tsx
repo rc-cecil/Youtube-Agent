@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { lazy, useEffect, useState, useCallback } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   BrowserRouter,
@@ -34,13 +34,17 @@ import {
   Gamepad2,
   Play,
   Sparkles,
+  WandSparkles,
+  CheckCircle2,
 } from 'lucide-react';
+import type { EditDecisionList } from '../../../packages/remotion/src/edl.js';
 import type {
   AiUsageView,
   HighlightScoreView,
   SourceView,
   JobView,
   UploadView,
+  ShortSummaryView,
 } from '../../../packages/shared/src/index.js';
 import { api, post } from './api.js';
 import { DashboardHero } from '@/components/dashboard-hero';
@@ -61,6 +65,8 @@ import { Field, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import './styles.css';
+
+const RemotionPreview = lazy(() => import('@/components/remotion-preview'));
 
 type User = { id: string; email: string };
 const errorText = (error: unknown) =>
@@ -110,6 +116,11 @@ const friendly: Record<string, string> = {
   PENDING: 'Pending',
   RUNNING: 'Running',
   RETRYING: 'Retrying',
+  EDIT_PLANNED: 'Edit planned',
+  RENDERING: 'Rendering',
+  QC: 'Quality check',
+  APPROVED: 'Approved',
+  REJECTED: 'Rejected',
 };
 function Badge({ state }: { state: string }) {
   return (
@@ -710,6 +721,18 @@ function SourceDetail() {
       setBusy(false);
     }
   }
+  async function createShorts() {
+    setBusy(true);
+    setActionError('');
+    try {
+      await post(`/sources/${id}/shorts`);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <>
       <Link className="back-link" to="/library">
@@ -739,13 +762,24 @@ function SourceDetail() {
                 <RefreshCw size={16} /> Retry processing
               </button>
             )}
-            {data.duration && !['PROCESSING', 'ANALYZING'].includes(data.status) && (
+            {data.duration &&
+              !data.shorts?.length &&
+              !['PROCESSING', 'ANALYZING'].includes(data.status) && (
+                <button
+                  disabled={busy}
+                  className="button secondary"
+                  onClick={() => void analyzeAgain()}
+                >
+                  <ScanSearch size={16} /> Analyze again
+                </button>
+              )}
+            {data.candidates?.some((candidate) => candidate.score) && !data.shorts?.length && (
               <button
                 disabled={busy}
-                className="button secondary"
-                onClick={() => void analyzeAgain()}
+                className="button primary"
+                onClick={() => void createShorts()}
               >
-                <ScanSearch size={16} /> Analyze again
+                <WandSparkles size={16} /> Create Shorts
               </button>
             )}
           </div>
@@ -820,6 +854,7 @@ function SourceDetail() {
                     <select
                       aria-label="Correct detected game"
                       value={game}
+                      disabled={Boolean(data.shorts?.length)}
                       onChange={(event) => setGame(event.target.value)}
                     >
                       <option value="">Correct game…</option>
@@ -843,12 +878,17 @@ function SourceDetail() {
                     </select>
                     <button
                       className="button secondary"
-                      disabled={!game || busy}
+                      disabled={!game || busy || Boolean(data.shorts?.length)}
                       onClick={() => void saveGame()}
                     >
                       Save
                     </button>
                   </div>
+                  {Boolean(data.shorts?.length) && (
+                    <small>
+                      Locked after Short creation to preserve the approved source evidence.
+                    </small>
+                  )}
                 </div>
               </div>
             </section>
@@ -915,15 +955,393 @@ function SourceDetail() {
           )}
           <section className="panel">
             <div className="panel-heading">
+              <h2>Generated Shorts</h2>
+              <span className="muted">{data.shorts?.length ?? 0} planned from this source</span>
+            </div>
+            {data.shorts?.length ? (
+              <div className="short-list compact">
+                {data.shorts.map((short) => (
+                  <Link to={`/shorts/${short.id}`} className="short-row" key={short.id}>
+                    <div className="short-poster">
+                      <Clapperboard size={22} />
+                    </div>
+                    <div>
+                      <strong>{short.title}</strong>
+                      <small>{short.selectedConcept?.hook ?? 'Edit plan ready'}</small>
+                    </div>
+                    <Badge state={short.state} />
+                    <ChevronRight size={18} />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="muted pad">
+                Ranked moments become structured edits here automatically.
+              </p>
+            )}
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
               <h2>Processing jobs</h2>
             </div>
             <JobRows jobs={data.jobs} />
           </section>
           <p className="phase-note">
-            Phase 3 first finds activity locally, then samples only finalist frames for game-aware
-            event interpretation and ranking. Mock mode is explicitly labeled and makes no visual
-            gameplay claims; configure OpenAI mode for live multimodal interpretation.
+            Phase 4 preserves the measured ranking pipeline, then turns finalists into versioned,
+            validated edit plans. Mock mode remains explicitly labeled and makes no visual claims.
           </p>
+        </>
+      )}
+    </>
+  );
+}
+
+type ShortDetailView = Omit<ShortSummaryView, 'source' | 'renders'> & {
+  sourceId: string;
+  description: string;
+  hashtags: string[];
+  editorialRole: string | null;
+  confidence: number;
+  source: {
+    id: string;
+    filename: string;
+    width: number;
+    height: number;
+    hasAudio: boolean;
+    rightsAcknowledgedAt: string;
+  };
+  candidate: {
+    startTime: number;
+    eventTime: number;
+    endTime: number;
+    reason: string;
+    score: HighlightScoreView;
+    detectedEvent?: { eventType: string; confidence: number };
+    concepts: Array<{
+      id: string;
+      key: string;
+      concept: string;
+      hook: string;
+      rationale: string;
+      selected: boolean;
+    }>;
+  };
+  editPlans: Array<{
+    id: string;
+    version: number;
+    document: EditDecisionList;
+    validatedAt: string;
+  }>;
+  renders: Array<{
+    id: string;
+    state: string;
+    qc: Record<string, unknown> | null;
+    errorMessage: string | null;
+    job: JobView;
+  }>;
+};
+
+function ShortsPage() {
+  const { data, error } = useData<{ shorts: ShortSummaryView[] }>('/shorts');
+  return (
+    <>
+      <PageTitle
+        eyebrow="AI EDITOR"
+        title="Shorts"
+        description="Review planned vertical edits, render progress, and QC-approved videos."
+      />
+      <ErrorBox message={error} />
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Created Shorts</h2>
+          <span className="muted">Latest 100</span>
+        </div>
+        {data?.shorts.length ? (
+          <div className="short-list">
+            {data.shorts.map((short) => (
+              <Link to={`/shorts/${short.id}`} className="short-row" key={short.id}>
+                <div className="short-poster">
+                  <Play size={20} />
+                </div>
+                <div className="short-copy">
+                  <strong>{short.title}</strong>
+                  <small>
+                    {short.game} · {eventLabel(short.eventType ?? '')} ·{' '}
+                    {duration(short.duration ?? null)}
+                  </small>
+                  <p>{short.selectedConcept?.concept}</p>
+                </div>
+                <span className="quality-score">
+                  {short.qualityScore ?? '—'}
+                  <small>quality</small>
+                </span>
+                <div className="short-states">
+                  <Badge state={short.state} />
+                  <Badge state={short.reviewState} />
+                </div>
+                <ChevronRight size={18} />
+              </Link>
+            ))}
+          </div>
+        ) : data ? (
+          <Empty
+            title="No Shorts yet"
+            text="Ranked highlights are converted into editable vertical concepts automatically."
+          />
+        ) : (
+          <p className="pad">Loading…</p>
+        )}
+      </section>
+      <p className="phase-note">
+        Every video remains in manual review by default. Publishing and daily slate assignment begin
+        in later phases.
+      </p>
+    </>
+  );
+}
+
+function ShortDetail() {
+  const { id } = useParams(),
+    { data, error, refresh } = useData<ShortDetailView>(`/shorts/${id}`);
+  const [actionError, setActionError] = useState(''),
+    [busy, setBusy] = useState(false),
+    [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(''),
+    [description, setDescription] = useState(''),
+    [hashtags, setHashtags] = useState('');
+  useEffect(() => {
+    if (data) {
+      setTitle(data.title);
+      setDescription(data.description);
+      setHashtags(data.hashtags.join(' '));
+    }
+  }, [data?.id, data?.title, data?.description, data?.hashtags.join(' ')]);
+  async function action(path: string, body?: unknown) {
+    setBusy(true);
+    setActionError('');
+    try {
+      await post(path, body);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function saveMetadata(event: React.FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setActionError('');
+    try {
+      await api(`/shorts/${id}/metadata`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          title,
+          description,
+          hashtags: hashtags.split(/\s+/).filter(Boolean),
+        }),
+      });
+      setEditing(false);
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const plan = data?.editPlans[0],
+    edl = plan?.document,
+    latestRender = data?.renders[0];
+  return (
+    <>
+      <Link className="back-link" to="/shorts">
+        <ArrowLeft size={16} /> Shorts
+      </Link>
+      <PageTitle
+        eyebrow="SHORT DETAIL"
+        title={data?.title ?? 'Short'}
+        description="The selected concept, structured edit plan, render, and review decision."
+      />
+      <ErrorBox message={error || actionError} />
+      {data && edl && (
+        <>
+          <div className="detail-actions">
+            <Badge state={data.state} />
+            <Badge state={data.reviewState} />
+            <button
+              className="button secondary"
+              disabled={busy || ['RENDERING', 'QC'].includes(data.state)}
+              onClick={() => void action(`/shorts/${id}/render`)}
+            >
+              <RefreshCw size={16} /> Re-render
+            </button>
+            <button
+              className="button secondary"
+              disabled={busy}
+              onClick={() => setEditing(!editing)}
+            >
+              <Settings size={16} /> Edit metadata
+            </button>
+            <button
+              className="button primary"
+              disabled={busy || data.state !== 'READY'}
+              onClick={() => void action(`/shorts/${id}/review`, { decision: 'APPROVED' })}
+            >
+              <CheckCircle2 size={16} /> Approve
+            </button>
+            <button
+              className="button secondary"
+              disabled={busy}
+              onClick={() => void action(`/shorts/${id}/review`, { decision: 'REJECTED' })}
+            >
+              <X size={16} /> Reject
+            </button>
+          </div>
+          {editing && (
+            <form className="panel metadata-form" onSubmit={(event) => void saveMetadata(event)}>
+              <label>
+                Title
+                <input
+                  value={title}
+                  maxLength={100}
+                  onChange={(event) => setTitle(event.target.value)}
+                />
+              </label>
+              <label>
+                Description
+                <textarea
+                  value={description}
+                  maxLength={500}
+                  onChange={(event) => setDescription(event.target.value)}
+                />
+              </label>
+              <label>
+                Hashtags
+                <input value={hashtags} onChange={(event) => setHashtags(event.target.value)} />
+              </label>
+              <div>
+                <button className="button primary" disabled={busy}>
+                  Save metadata
+                </button>
+              </div>
+            </form>
+          )}
+          <div className="short-detail-grid">
+            <section className="panel player-panel">
+              <div className="panel-heading">
+                <h2>Composition preview</h2>
+                <span className="muted">Shared Remotion timeline · v{plan.version}</span>
+              </div>
+              <div className="vertical-player">
+                <React.Suspense fallback={<div className="player-loading">Preparing preview…</div>}>
+                  <RemotionPreview
+                    videoSrc={`/api/sources/${data.source.id}/assets/proxy`}
+                    sourceWidth={data.source.width}
+                    sourceHeight={data.source.height}
+                    hasAudio={data.source.hasAudio}
+                    edl={edl}
+                  />
+                </React.Suspense>
+              </div>
+              {latestRender?.state === 'READY' && (
+                <a className="button secondary full" href={`/api/shorts/${data.id}/media`}>
+                  <ArrowDownToLine size={16} /> Open QC-approved MP4
+                </a>
+              )}
+            </section>
+            <section className="panel short-inspector">
+              <div className="panel-heading">
+                <h2>Editorial brief</h2>
+              </div>
+              <dl>
+                <dt>Source</dt>
+                <dd>
+                  <Link to={`/library/${data.source.id}`}>{data.source.filename}</Link>
+                </dd>
+                <dt>Moment</dt>
+                <dd>
+                  {duration(data.candidate.startTime)}–{duration(data.candidate.endTime)} · payoff{' '}
+                  {duration(data.sourceTimestamp ?? 0)}
+                </dd>
+                <dt>Game / event</dt>
+                <dd>
+                  {data.game} · {eventLabel(data.eventType ?? '')}
+                </dd>
+                <dt>Highlight / quality</dt>
+                <dd>
+                  {data.candidate.score.highlightScore} / {data.qualityScore}
+                </dd>
+                <dt>AI evidence</dt>
+                <dd>{data.candidate.score.reason}</dd>
+                <dt>Concept</dt>
+                <dd>{data.selectedConcept?.concept}</dd>
+                <dt>Hook</dt>
+                <dd>{data.selectedConcept?.hook}</dd>
+                <dt>Duration</dt>
+                <dd>{edl.outputDuration.toFixed(1)} seconds</dd>
+                <dt>Crop</dt>
+                <dd>{eventLabel(edl.cropStrategy)}</dd>
+                <dt>Editorial role</dt>
+                <dd>{data.editorialRole ?? 'Unassigned · Phase 5'}</dd>
+                <dt>Metadata</dt>
+                <dd>
+                  {data.description}
+                  <br />
+                  {data.hashtags.join(' ')}
+                </dd>
+              </dl>
+            </section>
+          </div>
+          <section className="panel">
+            <div className="panel-heading">
+              <h2>Concept alternatives</h2>
+              <span className="muted">One highlight, three editorial approaches</span>
+            </div>
+            <div className="concept-grid">
+              {data.candidate.concepts.map((concept) => (
+                <article className={concept.selected ? 'selected' : ''} key={concept.id}>
+                  <small>{eventLabel(concept.key)}</small>
+                  <strong>{concept.hook}</strong>
+                  <p>{concept.concept}</p>
+                  <span>{concept.rationale}</span>
+                </article>
+              ))}
+            </div>
+          </section>
+          <section className="panel edl-panel">
+            <div className="panel-heading">
+              <h2>Validated edit decision list</h2>
+              <span className="muted">
+                Schema v{plan.version} · {edl.cuts.length} cut{edl.cuts.length === 1 ? '' : 's'}
+              </span>
+            </div>
+            <pre>{JSON.stringify(edl, null, 2)}</pre>
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
+              <h2>Render & QC history</h2>
+            </div>
+            {data.renders.length ? (
+              <div className="render-history">
+                {data.renders.map((render) => (
+                  <div key={render.id}>
+                    <Badge state={render.state} />
+                    <span>
+                      Attempt {render.job.attempt} · {render.job.progress}%
+                    </span>
+                    <small>
+                      {render.errorMessage ??
+                        (render.qc
+                          ? 'Playable, 1080×1920, duration, audio, boundaries, safe text, rights, and metadata passed.'
+                          : 'Waiting for renderer')}
+                    </small>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="muted pad">No render attempts yet.</p>
+            )}
+          </section>
         </>
       )}
     </>
@@ -942,7 +1360,11 @@ function JobRows({ jobs }: { jobs: JobView[] }) {
                     ? 'Gameplay analysis'
                     : job.kind === 'RANK'
                       ? 'AI candidate ranking'
-                      : 'Media validation')}
+                      : job.kind === 'PLAN'
+                        ? 'Short concept & edit plan'
+                        : job.kind === 'RENDER'
+                          ? 'Vertical render & QC'
+                          : 'Media validation')}
               </strong>
               <small>
                 Attempt {job.attempt} · {new Date(job.createdAt).toLocaleString()}
@@ -967,7 +1389,7 @@ function QueuePage() {
       <PageTitle
         eyebrow="BACKGROUND PROCESSING"
         title="Job queue"
-        description="Follow ingestion and analysis progress, attempts, and failures."
+        description="Follow ingestion, analysis, planning, rendering, QC, attempts, and failures."
       />
       <ErrorBox message={error} />
       <section className="panel">
@@ -1059,6 +1481,7 @@ function HealthPage() {
       status: string;
       services: Record<string, string>;
       heartbeat: string | null;
+      rendererHeartbeat: string | null;
     } | null>(null),
     [error, setError] = useState('');
   useEffect(() => {
@@ -1102,11 +1525,13 @@ function HealthPage() {
             <p>
               {name === 'worker'
                 ? 'Validates media and recovers queued jobs.'
-                : name === 'database'
-                  ? 'Source metadata, sessions, and durable job records.'
-                  : name === 'redis'
-                    ? 'Background job delivery and worker heartbeat.'
-                    : 'Original recordings and upload parts.'}
+                : name === 'renderer'
+                  ? 'Builds vertical compositions and enforces media QC.'
+                  : name === 'database'
+                    ? 'Source metadata, sessions, and durable job records.'
+                    : name === 'redis'
+                      ? 'Background job delivery and worker heartbeat.'
+                      : 'Original recordings and upload parts.'}
             </p>
           </section>
         ))}
@@ -1121,9 +1546,15 @@ function HealthPage() {
         Last worker heartbeat:{' '}
         {data?.heartbeat ? new Date(data.heartbeat).toLocaleString() : 'Not available'}
       </p>
+      <p className="muted">
+        Last renderer heartbeat:{' '}
+        {data?.rendererHeartbeat
+          ? new Date(data.rendererHeartbeat).toLocaleString()
+          : 'Not available'}
+      </p>
       <p className="phase-note">
-        Phase 3 AI ranking runs inside the existing worker. Rendering, YouTube, and scheduling
-        services arrive in later phases.
+        Phase 4 separates media analysis from resource-intensive Remotion rendering. Publishing and
+        scheduling remain unavailable until their implementation phases.
       </p>
     </>
   );
@@ -1136,6 +1567,7 @@ function SettingsPage({ user }: { user: User }) {
     storage: string;
     aiMode: 'mock' | 'openai';
     aiModel: string;
+    planningModel: string;
   }>('/config');
   return (
     <>
@@ -1154,6 +1586,7 @@ function SettingsPage({ user }: { user: User }) {
           ['Upload chunk size', data ? bytes(data.chunkBytes) : '…'],
           ['AI ranking mode', data?.aiMode === 'openai' ? 'OpenAI multimodal' : 'Development mock'],
           ['AI ranking model', data?.aiModel],
+          ['Short planning model', data?.planningModel],
         ].map(([k, v]) => (
           <div key={k}>
             <small>{k}</small>
@@ -1161,11 +1594,113 @@ function SettingsPage({ user }: { user: User }) {
           </div>
         ))}
       </section>
+      <ShortSettingsPanel />
       <p className="phase-note">
-        Infrastructure settings are configured through the server environment. Scheduling and
-        publishing preferences will arrive with their implementation phases.
+        Autopilot is stored now but cannot publish in Phase 4. Every rendered Short still requires a
+        deliberate approval; scheduling and publishing arrive in later phases.
       </p>
     </>
+  );
+}
+
+type ShortSettings = {
+  autopilotEnabled: boolean;
+  minimumHighlightScore: number;
+  minimumConfidence: number;
+  minimumQualityScore: number;
+  preferredHashtags: string[];
+  bannedHashtags: string[];
+};
+function ShortSettingsPanel() {
+  const { data, error, refresh } = useData<ShortSettings>('/settings/shorts');
+  const [draft, setDraft] = useState<ShortSettings | null>(null),
+    [message, setMessage] = useState('');
+  useEffect(() => {
+    if (data && !draft) setDraft(data);
+  }, [data, draft]);
+  if (!draft)
+    return (
+      <section className="panel pad">
+        <ErrorBox message={error} />
+        Loading short settings…
+      </section>
+    );
+  const numberField = (
+    key: 'minimumHighlightScore' | 'minimumConfidence' | 'minimumQualityScore',
+    label: string,
+  ) => (
+    <label>
+      {label}
+      <input
+        type="number"
+        min={0}
+        max={100}
+        value={draft[key]}
+        onChange={(event) => setDraft({ ...draft, [key]: Number(event.target.value) })}
+      />
+    </label>
+  );
+  return (
+    <section className="panel settings-editor">
+      <div className="panel-heading">
+        <h2>Short creation guardrails</h2>
+        <span className="muted">Manual approval defaults</span>
+      </div>
+      <ErrorBox message={error || message} />
+      <div className="settings-grid">
+        <label className="toggle-row">
+          <input
+            type="checkbox"
+            checked={draft.autopilotEnabled}
+            onChange={(event) => setDraft({ ...draft, autopilotEnabled: event.target.checked })}
+          />
+          <span>
+            <strong>Autopilot preference</strong>
+            <small>Saved for future publishing; inactive in Phase 4.</small>
+          </span>
+        </label>
+        {numberField('minimumHighlightScore', 'Minimum highlight score')}
+        {numberField('minimumConfidence', 'Minimum confidence')}
+        {numberField('minimumQualityScore', 'Minimum render quality')}
+        <label>
+          Preferred hashtags
+          <input
+            value={draft.preferredHashtags.join(' ')}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                preferredHashtags: event.target.value.split(/\s+/).filter(Boolean),
+              })
+            }
+          />
+        </label>
+        <label>
+          Banned hashtags
+          <input
+            value={draft.bannedHashtags.join(' ')}
+            onChange={(event) =>
+              setDraft({
+                ...draft,
+                bannedHashtags: event.target.value.split(/\s+/).filter(Boolean),
+              })
+            }
+          />
+        </label>
+      </div>
+      <div className="settings-actions">
+        <button
+          className="button primary"
+          onClick={() => {
+            setMessage('');
+            void api('/settings/shorts', { method: 'PATCH', body: JSON.stringify(draft) })
+              .then(() => refresh())
+              .catch((e) => setMessage(errorText(e)));
+          }}
+        >
+          Save guardrails
+        </button>
+      </div>
+    </section>
   );
 }
 function Login({ onLogin }: { onLogin(user: User): void }) {
@@ -1287,6 +1822,7 @@ function App() {
     ['/uploads', 'Uploads', UploadCloud],
     ['/library', 'Source library', FolderOpen],
     ['/analysis', 'Analysis', ScanSearch],
+    ['/shorts', 'Shorts', Clapperboard],
     ['/queue', 'Job queue', Clock3],
     ['/health', 'System health', Activity],
     ['/settings', 'Settings', Settings],
@@ -1362,13 +1898,15 @@ function App() {
             <Route path="/library" element={<Library />} />
             <Route path="/library/:id" element={<SourceDetail />} />
             <Route path="/analysis" element={<AnalysisPage />} />
+            <Route path="/shorts" element={<ShortsPage />} />
+            <Route path="/shorts/:id" element={<ShortDetail />} />
             <Route path="/queue" element={<QueuePage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 3</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 4</span>
           </footer>
         </main>
       </div>

@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1 and 2 were completed sequentially; the subsequent explicit instruction authorizes and completes Phase 3 only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–4 were completed sequentially under explicit user authorization; later phases remain design-only.
 
 ## 1. Existing architecture assessment
 
@@ -8,7 +8,7 @@ The repository `rc-cecil/Youtube-Agent`, at baseline `dd3ce60`, contains only a 
 
 ## 2. Directory structure
 
-Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`. Phase 3 adds `ai` and `game-detectors`. Later phases add `apps/renderer` and packages for Remotion, YouTube, analytics, and scheduling; do not create pretend implementations now.
+Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`; Phase 3 added `ai` and `game-detectors`; Phase 4 adds `apps/renderer` and `packages/remotion`. Later phases add YouTube, analytics, scheduling, and learning packages; do not create pretend implementations now.
 
 ## 3. Database schema plan
 
@@ -20,7 +20,7 @@ Phase 2 adds one current `VideoAnalysis` per source, notable `AnalysisSignal` ro
 
 Phase 3 adds one `DetectedEvent` and `HighlightScore` per ranked finalist plus immutable `AiResultCache` entries keyed by owner-bound content, provider, model, and prompt version. Scores retain all 15 specified dimensions, concise evidence, provider provenance, cache state, tokens, and estimated cost. Three private frame assets are retained per finalist for reproducibility; they are never directly exposed by the API.
 
-Later migrations add: User → YouTubeConnection → Channel; SourceVideo → AnalysisJob/GameDetection/DetectedEvent → HighlightCandidate → HighlightScore/ShortConcept → versioned EditDecisionList → RenderedShort. Campaign owns unique channel/local-date/editorial-role ScheduleSlots; a slot owns publication attempts, and YouTubePublication has a unique external video ID and idempotency key. AnalyticsSnapshot and RevenueSnapshot use unique report-window/dimensions keys and retain history. PerformanceFeature, PerformanceInsight, Experiment and versioned StrategyConfig retain evidence and audit trails. Notifications reference jobs/publications. Use foreign keys, owner/channel indexes, unique deduplication constraints, UTC timestamps and explicit IANA timezone configuration. Monetary values use decimals and unavailable metrics remain null.
+Phase 4 adds User/Source/Candidate → GeneratedShort, three ShortConcept alternatives, versioned EditDecisionList, and RenderArtifact linked one-to-one to a durable RENDER JobRun. Review state is independent of render state and defaults to PENDING. Later migrations add: User → YouTubeConnection → Channel; GeneratedShort → schedule/publication records. Campaign owns unique channel/local-date/editorial-role ScheduleSlots; a slot owns publication attempts, and YouTubePublication has a unique external video ID and idempotency key. AnalyticsSnapshot and RevenueSnapshot use unique report-window/dimensions keys and retain history. PerformanceFeature, PerformanceInsight, Experiment and versioned StrategyConfig retain evidence and audit trails. Notifications reference jobs/publications. Use foreign keys, owner/channel indexes, unique deduplication constraints, UTC timestamps and explicit IANA timezone configuration. Monetary values use decimals and unavailable metrics remain null.
 
 ## 4. Job architecture
 
@@ -32,9 +32,9 @@ Upload parts are bounded, streamed and individually hashed. Part retries must ma
 
 Cheap proxy, cuts/motion/audio/HUD/OCR signals narrow candidates with setup/payoff context. A pluggable generic detector falls back on low-confidence game recognition; FC, GTA, COD and Fortnite adapters enrich signals. Inspect sampled candidate frames with a provider interface, model names from environment categories, schema-validated responses, content/model/prompt-version caching, quotas and cost accounting. Score all Section 14 features and keep concise evidence, never hidden chain-of-thought. Learning uses channel-relative outcomes, minimum sample sizes, rolling 7/28/90-day windows, confidence and audited bounded strategy changes with exploration.
 
-## 6. Remotion pipeline (Phase 4)
+## 6. Remotion pipeline (implemented in Phase 4)
 
-Validate versioned EDLs before a dedicated render queue. EDLs express source intervals, content-driven duration, cuts, crop/tracking strategy, selective captions, effects, audio and branding. Remotion is the final 1080×1920 composition engine; FFmpeg handles preprocessing and QC. Shared compositions power Studio, previews and renders. QC validates decoding, duration, aspect ratio, audio expectation, black boundaries, readability and safe zones before READY. Rendering never runs in HTTP handlers. Fixtures and render smoke tests arrive with this phase.
+Validate immutable EDL versions before the dedicated `short-rendering` queue. EDLs express source intervals, content-driven duration, measured dead-air cuts, crop/tracking strategy, selective captions, zoom/freeze/replay/overlays, and audio instructions. Remotion is the final 1080×1920 composition engine; FFmpeg normalizes retained audio and performs decode/boundary QC. The same `GameplayShort` component powers Studio, browser previews, smoke tests, and worker renders. Render artifacts become READY only after resolution, duration, audio, opening/ending frame, text safety, rights, and metadata checks pass. Rendering never runs in HTTP handlers.
 
 ## 7. YouTube integration (Phases 5–6)
 
@@ -56,7 +56,7 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Stop after Phase 3. Phase 4 requires a new user instruction.**
+**Stop after Phase 4. Phase 5 requires a new user instruction.**
 
 ## 10. Known risks and decisions
 

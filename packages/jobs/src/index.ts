@@ -3,8 +3,10 @@ import { Redis } from 'ioredis';
 import type { PrismaClient } from '@prisma/client';
 import type { Storage } from '../../storage/src/index.js';
 export const QUEUE = 'video-processing';
+export const RENDER_QUEUE = 'short-rendering';
 export const MAX_ATTEMPTS = 3;
 export const HEARTBEAT = 'shorts:processing:heartbeat';
+export const RENDER_HEARTBEAT = 'shorts:rendering:heartbeat';
 export function redisConnection(url: string, worker = false) {
   return new Redis(url, {
     maxRetriesPerRequest: worker ? null : 1,
@@ -13,9 +15,12 @@ export function redisConnection(url: string, worker = false) {
     enableOfflineQueue: worker,
   });
 }
-export async function reconcileJobs(db: PrismaClient, queue: Queue) {
+export async function reconcileJobs(db: PrismaClient, queue: Queue, kinds?: string[]) {
   const jobs = await db.jobRun.findMany({
-    where: { state: { in: ['PENDING', 'RUNNING', 'RETRYING'] } },
+    where: {
+      state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
+      kind: kinds ? { in: kinds } : undefined,
+    },
     orderBy: { createdAt: 'asc' },
     take: 500,
   });
@@ -41,6 +46,21 @@ export async function reconcileJobs(db: PrismaClient, queue: Queue) {
       await failExhausted(db, job.id, job.sourceId, job.kind);
     }
   }
+}
+export async function backfillShortPlanningJobs(db: PrismaClient) {
+  const sources = await db.sourceVideo.findMany({
+    where: {
+      status: 'READY',
+      candidates: { some: { score: { isNot: null } } },
+      shorts: { none: {} },
+      jobs: { none: { kind: 'PLAN' } },
+    },
+    select: { id: true },
+    orderBy: { createdAt: 'asc' },
+    take: 100,
+  });
+  for (const source of sources)
+    await db.jobRun.create({ data: { sourceId: source.id, kind: 'PLAN' } });
 }
 export async function backfillAnalysisJobs(db: PrismaClient) {
   const sources = await db.sourceVideo.findMany({
@@ -86,7 +106,16 @@ export async function backfillRankingJobs(db: PrismaClient) {
     });
 }
 async function failExhausted(db: PrismaClient, id: string, sourceId: string, kind: string) {
-  const jobLabel = kind === 'ANALYZE' ? 'analysis' : kind === 'RANK' ? 'ranking' : 'ingestion';
+  const jobLabel =
+    kind === 'ANALYZE'
+      ? 'analysis'
+      : kind === 'RANK'
+        ? 'ranking'
+        : kind === 'PLAN'
+          ? 'short planning'
+          : kind === 'RENDER'
+            ? 'rendering'
+            : 'ingestion';
   await db.$transaction(async (tx) => {
     const changed = await tx.jobRun.updateMany({
       where: { id, state: { in: ['PENDING', 'RUNNING', 'RETRYING'] } },
@@ -98,7 +127,24 @@ async function failExhausted(db: PrismaClient, id: string, sourceId: string, kin
       },
     });
     if (changed.count) {
-      await tx.sourceVideo.update({ where: { id: sourceId }, data: { status: 'FAILED' } });
+      if (kind === 'RENDER') {
+        const artifact = await tx.renderArtifact.findUnique({ where: { jobId: id } });
+        if (artifact) {
+          await tx.renderArtifact.update({
+            where: { id: artifact.id },
+            data: {
+              state: 'FAILED',
+              errorCode: 'WORKER_INTERRUPTED',
+              errorMessage: `Worker retry limit reached during ${jobLabel}.`,
+            },
+          });
+          await tx.generatedShort.update({
+            where: { id: artifact.shortId },
+            data: { state: 'FAILED' },
+          });
+        }
+      } else if (kind !== 'PLAN')
+        await tx.sourceVideo.update({ where: { id: sourceId }, data: { status: 'FAILED' } });
       await tx.failureEvent.create({
         data: {
           jobId: id,

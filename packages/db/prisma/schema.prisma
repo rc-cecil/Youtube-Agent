@@ -26,6 +26,27 @@ enum UploadState {
   COMPLETE
   EXPIRED
 }
+enum ShortState {
+  DRAFT
+  EDIT_PLANNED
+  RENDERING
+  QC
+  READY
+  FAILED
+  ARCHIVED
+}
+enum ReviewState {
+  PENDING
+  APPROVED
+  REJECTED
+}
+enum RenderState {
+  PENDING
+  RENDERING
+  QC
+  READY
+  FAILED
+}
 model User {
   id String @id @default(uuid())
   email String @unique
@@ -35,6 +56,8 @@ model User {
   sources SourceVideo[]
   uploads UploadSession[]
   auditLogs AuditLog[]
+  shorts GeneratedShort[]
+  shortSettings ShortCreationSettings?
 }
 model Session {
   id String @id @default(uuid())
@@ -102,6 +125,7 @@ model SourceVideo {
   candidates HighlightCandidate[]
   detectedEvents DetectedEvent[]
   aiCache AiResultCache[]
+  shorts GeneratedShort[]
   @@index([userId, createdAt])
   @@index([userId, sha256])
 }
@@ -164,6 +188,8 @@ model HighlightCandidate {
   createdAt DateTime @default(now())
   score HighlightScore?
   detectedEvent DetectedEvent?
+  concepts ShortConcept[]
+  generatedShort GeneratedShort?
   @@index([sourceId, signalScore])
   @@index([analysisId, eventTime])
 }
@@ -254,8 +280,105 @@ model JobRun {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   failures FailureEvent[]
+  render RenderArtifact?
   @@index([state, createdAt])
   @@index([sourceId, createdAt])
+}
+model ShortCreationSettings {
+  id String @id @default(uuid())
+  userId String @unique
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  autopilotEnabled Boolean @default(false)
+  minimumHighlightScore Int @default(55)
+  minimumConfidence Int @default(50)
+  minimumQualityScore Int @default(55)
+  preferredHashtags String[] @default([])
+  bannedHashtags String[] @default([])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+model ShortConcept {
+  id String @id @default(uuid())
+  candidateId String
+  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  key String
+  concept String
+  hook String
+  rationale String
+  selected Boolean @default(false)
+  createdAt DateTime @default(now())
+  generatedShort GeneratedShort?
+  @@unique([candidateId, key])
+  @@index([candidateId, selected])
+}
+model GeneratedShort {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceId String
+  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  candidateId String @unique
+  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  selectedConceptId String @unique
+  selectedConcept ShortConcept @relation(fields: [selectedConceptId], references: [id])
+  state ShortState @default(DRAFT)
+  reviewState ReviewState @default(PENDING)
+  title String
+  titleCandidates Json
+  description String
+  hashtags String[]
+  game String
+  eventType String
+  editorialRole String?
+  sourceTimestamp Float
+  duration Float
+  confidence Int
+  qualityScore Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  editPlans EditDecisionList[]
+  renders RenderArtifact[]
+  @@index([userId, createdAt])
+  @@index([sourceId, createdAt])
+  @@index([state, createdAt])
+}
+model EditDecisionList {
+  id String @id @default(uuid())
+  shortId String
+  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  version Int
+  schemaVersion Int @default(1)
+  document Json
+  validatedAt DateTime
+  createdAt DateTime @default(now())
+  renders RenderArtifact[]
+  @@unique([shortId, version])
+}
+model RenderArtifact {
+  id String @id @default(uuid())
+  shortId String
+  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  editDecisionListId String
+  editDecisionList EditDecisionList @relation(fields: [editDecisionListId], references: [id])
+  jobId String @unique
+  job JobRun @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  state RenderState @default(PENDING)
+  storageKey String? @unique
+  bytes BigInt?
+  sha256 String?
+  duration Float?
+  width Int?
+  height Int?
+  videoCodec String?
+  audioCodec String?
+  hasAudio Boolean?
+  qc Json?
+  errorCode String?
+  errorMessage String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([shortId, createdAt])
+  @@index([state, createdAt])
 }
 model FailureEvent {
   id String @id @default(uuid())

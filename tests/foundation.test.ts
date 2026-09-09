@@ -17,7 +17,15 @@ import {
   candidateRankingSchema,
   MockCandidateRankingProvider,
   OpenAICandidateRankingProvider,
+  MockShortPlanningProvider,
+  OpenAIShortPlanningProvider,
+  shortPlanningSchema,
 } from '../packages/ai/src/index.js';
+import {
+  cutsWithoutDeadAir,
+  editDecisionListSchema,
+  validateEditDecisionList,
+} from '../packages/remotion/src/public.js';
 import {
   CODDetector,
   FCDetector,
@@ -391,5 +399,115 @@ describe('Phase 3 game intelligence', () => {
         ],
       }).success,
     ).toBe(false);
+  });
+});
+
+describe('Phase 4 short creation', () => {
+  const planningInput = {
+    inputHash: 'plan-hash',
+    ownerHash: 'owner-hash',
+    game: 'Fortnite',
+    eventType: 'FINAL_CIRCLE_WIN',
+    sourceDuration: 60,
+    startTime: 20,
+    eventTime: 26,
+    endTime: 30,
+    reason: 'Visible end-game state and outcome.',
+    highlightScore: 88,
+    confidence: 91,
+    contextIndependence: 80,
+    visualClarity: 90,
+    preferredHashtags: ['#creator'],
+    bannedHashtags: ['#spoiler'],
+  };
+  it('creates three distinct, valid and truthful concepts in deterministic mode', async () => {
+    const result = await new MockShortPlanningProvider().plan(planningInput);
+    expect(result.output.concepts.map((concept) => concept.key)).toEqual([
+      'ACTION_FIRST',
+      'TENSION_FIRST',
+      'CONTEXT_FIRST',
+    ]);
+    expect(
+      result.output.concepts.every((concept) => concept.hook.includes('FINAL CIRCLE WIN')),
+    ).toBe(true);
+    expect(result.output.concepts.every((concept) => !concept.hashtags.includes('#spoiler'))).toBe(
+      true,
+    );
+    expect(shortPlanningSchema.safeParse(result.output).success).toBe(true);
+  });
+  it('removes only interior measured dead air and preserves setup/payoff', () => {
+    expect(cutsWithoutDeadAir(10, 20, [{ timestamp: 13, duration: 2 }])).toEqual([
+      { sourceStart: 10, sourceEnd: 13, outputStart: 0, speed: 1 },
+      { sourceStart: 15, sourceEnd: 20, outputStart: 3, speed: 1 },
+    ]);
+    expect(cutsWithoutDeadAir(10, 20, [{ timestamp: 10, duration: 3 }])).toHaveLength(1);
+  });
+  it('rejects late hooks, unsafe tracking, invalid captions and timelines over 60 seconds', () => {
+    const valid = {
+      schemaVersion: 1,
+      clipStart: 10,
+      clipEnd: 20,
+      outputDuration: 10,
+      cropStrategy: 'BACKGROUND_BLUR',
+      trackedSubject: [],
+      hook: { text: 'VISIBLE EVENT', start: 0, end: 2, position: 'TOP' },
+      cuts: [{ sourceStart: 10, sourceEnd: 20, outputStart: 0, speed: 1 }],
+      zooms: [],
+      freezeFrames: [],
+      replay: null,
+      captions: [],
+      overlays: [],
+      audioInstructions: { preserveOriginal: true, normalize: true, gainDb: 0, ducking: [] },
+      title: 'VISIBLE EVENT',
+      description: '',
+      hashtags: ['#gaming'],
+    };
+    expect(validateEditDecisionList(valid).outputDuration).toBe(10);
+    expect(
+      editDecisionListSchema.safeParse({ ...valid, hook: { ...valid.hook, start: 1 } }).success,
+    ).toBe(false);
+    expect(editDecisionListSchema.safeParse({ ...valid, outputDuration: 61 }).success).toBe(false);
+    expect(
+      editDecisionListSchema.safeParse({ ...valid, trackedSubject: [{ time: 1, x: 0.5, y: 0.5 }] })
+        .success,
+    ).toBe(false);
+    expect(
+      editDecisionListSchema.safeParse({
+        ...valid,
+        captions: [{ text: 'x'.repeat(81), start: 0, end: 1, emphasis: [], position: 'BOTTOM' }],
+      }).success,
+    ).toBe(false);
+  });
+  it('uses strict Responses API output for short planning without supplying invented transcript', async () => {
+    let body: Record<string, unknown> | undefined;
+    const config = parseConfig({
+      DATABASE_URL: 'postgresql://localhost/test',
+      REDIS_URL: 'redis://localhost',
+      AI_MODE: 'openai',
+      OPENAI_API_KEY: 'test-key',
+      AI_VISION_MODEL: 'vision',
+      AI_REASONING_MODEL: 'reasoning',
+    });
+    const mockOutput = (await new MockShortPlanningProvider().plan(planningInput)).output;
+    const provider = new OpenAIShortPlanningProvider(config, async (_url, init) => {
+      body = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({
+          output_text: JSON.stringify(mockOutput),
+          usage: { input_tokens: 20, output_tokens: 30 },
+        }),
+        { status: 200 },
+      );
+    });
+    const result = await provider.plan(planningInput);
+    expect(body).toMatchObject({
+      model: 'reasoning',
+      store: false,
+      safety_identifier: 'owner-hash',
+      prompt_cache_key: 'plan-hash',
+      text: { format: { type: 'json_schema', strict: true } },
+    });
+    expect(JSON.stringify(body)).toContain('none is supplied here');
+    expect(result.output.selectedKey).toBe(mockOutput.selectedKey);
   });
 });

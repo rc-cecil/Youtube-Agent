@@ -44,12 +44,28 @@ const schema = z.object({
     .string()
     .optional()
     .transform((value) => value || undefined),
+  AI_REASONING_MODEL: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
   OPENAI_API_KEY: z
     .string()
     .optional()
     .transform((value) => value || undefined),
   AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
   AI_FINALIST_LIMIT: z.coerce.number().int().min(1).max(12).default(6),
+  SHORTS_PER_SOURCE_LIMIT: z.coerce.number().int().min(1).max(12).default(3),
+  RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
+  RENDER_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(60_000)
+    .max(8 * 3600_000)
+    .default(2 * 3600_000),
+  REMOTION_BROWSER_EXECUTABLE: z
+    .string()
+    .optional()
+    .transform((value) => value || undefined),
   AI_INPUT_USD_PER_1M: z.coerce.number().min(0).default(0),
   AI_OUTPUT_USD_PER_1M: z.coerce.number().min(0).default(0),
   SESSION_HOURS: z.coerce.number().int().min(1).max(168).default(24),

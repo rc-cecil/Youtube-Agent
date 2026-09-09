@@ -1,4 +1,5 @@
 node_modules/
+packages/remotion/public/sample-gameplay.mp4
 dist/
 .env
 .env.*

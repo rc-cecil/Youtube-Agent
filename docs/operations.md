@@ -1,4 +1,4 @@
-# Phase 3 operations
+# Phase 4 operations
 
 ## Runtime ownership
 
@@ -6,6 +6,7 @@
 - PostgreSQL owns durable source/job/session state. A source and PENDING job commit together.
 - Redis/BullMQ delivers jobs using JobRun IDs; the worker reconstructs missing queue entries.
 - Worker owns FFmpeg/ffprobe, ingestion, proxy/signal analysis, game adapters, sampled-frame ranking, retries, progress, heartbeat, upload cleanup, and expiration.
+- Renderer owns the separate `short-rendering` queue, temporary Remotion bundles, H.264/AAC output, audio normalization, output QC, render progress, and its own heartbeat. API requests never render inline.
 - Local storage holds originals/parts; S3/R2 uses the same contract. Local multi-process deployment needs a shared volume.
 
 BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idempotent work](https://docs.bullmq.io/patterns/idempotent-jobs), and [retry/backoff behavior](https://docs.bullmq.io/guide/retrying-failing-jobs) inform delivery. PostgreSQL retains terminal state after queue retention expires, so replaying a completed job is a no-op.
@@ -30,21 +31,26 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `FFMPEG_PATH`, `FFPROBE_PATH`                          | Worker executable paths                         |
 | `MEDIA_TIMEOUT_MS`                                     | Full decode timeout, default four hours         |
 | `WORKER_CONCURRENCY`                                   | Default two, range 1–16                         |
+| `RENDER_CONCURRENCY`                                   | Concurrent Short renders, default one           |
+| `RENDER_TIMEOUT_MS`                                    | Per-render/normalization ceiling                |
+| `REMOTION_BROWSER_EXECUTABLE`                          | Optional compatible Chromium executable         |
 | `ANALYSIS_FPS`                                         | Grayscale activity samples/sec, default one     |
 | `ANALYSIS_CANDIDATE_LIMIT`                             | Maximum generic windows/source, default 12      |
 | `PROXY_MAX_WIDTH`                                      | Review proxy maximum width, default 720         |
 | `AI_MODE`                                              | `mock` (default) or `openai` ranking provider   |
 | `AI_FINALIST_LIMIT`                                    | Candidates sampled per source, default six      |
+| `SHORTS_PER_SOURCE_LIMIT`                              | Planned finalists/source, default three         |
 | `AI_TIMEOUT_MS`                                        | Ranking request timeout, default 120 seconds    |
 | `OPENAI_API_KEY`                                       | Required server secret for `AI_MODE=openai`     |
 | `AI_VISION_MODEL`                                      | Required model name for `AI_MODE=openai`        |
+| `AI_REASONING_MODEL`                                   | Optional Short-planning model; vision fallback  |
 | `AI_INPUT_USD_PER_1M`, `AI_OUTPUT_USD_PER_1M`          | Optional explicit cost-estimate rates           |
 | `SESSION_HOURS`                                        | Session lifetime, default 24 hours              |
 | `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
 | `LOG_LEVEL`                                            | Structured log level                            |
 | `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
 
-Reserved later-phase variables in `.env.example` include the other OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
+Reserved later-phase variables in `.env.example` include the fast/transcription OpenAI model categories, Google OAuth values, token encryption key, and `YOUTUBE_MODE`. Setting them does not activate those integrations.
 
 ## Recovery
 
@@ -59,6 +65,14 @@ Reserved later-phase variables in `.env.example` include the other OpenAI model 
 **Analysis recovery:** ingestion commits a separate PENDING analysis intent and moves the source to ANALYZING. Reconciliation also backfills previously validated Phase 1 sources. Reanalysis is serialized, replaces derived signals/candidates, and preserves a user-corrected game. Deterministic proxy keys make storage retries idempotent.
 
 **Ranking recovery:** successful local analysis commits a separate PENDING `RANK` intent and stays ANALYZING until ranking succeeds. Reconciliation backfills Phase 2 analyses that never received a successful rank. Ranking samples only the configured finalists, validates strict structured output, and persists event evidence and all score dimensions atomically before READY. A failed rank retries only ranking, not ingestion or signal extraction. Manual game correction schedules a fresh rank with the selected adapter.
+
+**Planning recovery:** ranked sources without generated Shorts receive a durable `PLAN` intent. Planning caches owner-bound provider output, persists three alternatives, selects one, removes only measured interior dead air, and validates the complete EDL before creating render work. It never invents transcript captions. A failed plan does not invalidate the source or discard ranked evidence.
+
+**Source evidence boundary:** reanalysis and game correction are available until the first Short is generated. They return `409 SHORTS_EXIST` afterward so concepts, versioned EDLs, renders, and review decisions cannot be invalidated by replacing their ranked source evidence. Make source-level corrections before choosing Create Shorts.
+
+**Render recovery:** a dedicated process reconciles only `RENDER` jobs. Each attempt copies a private source proxy into an isolated temporary bundle, renders with one browser concurrency unit by default, normalizes retained audio, then fully decodes and checks the artifact. Retryable infrastructure failures return the Short to EDIT_PLANNED; terminal or QC failures become FAILED with evidence. Use Re-render after correction. Superseded successful artifacts remain in history. Approval is reset when rerendering.
+
+**Render QC:** READY requires a playable 1080×1920 H.264 output, expected audio presence, EDL-aligned duration, visible opening/final sampled frames, first-second hook and caption safety, rights acknowledgment, and complete title/hashtags. `npm run test:render` creates and removes a synthetic fixture. `npm run remotion:studio` creates `packages/remotion/public/sample-gameplay.mp4` (gitignored) and opens the shared composition.
 
 **AI modes and cost:** `mock` is an explicitly labeled deterministic development/test fixture and performs no network calls or visual event claims. Production rejects mock mode. `openai` sends low-detail finalist frames to the Responses API with `store:false`, a pseudonymous safety identifier, and strict JSON-schema output. Never expose the API key to the browser. Cached results are owner-bound and include source/frame hashes, detector profile, provider, model, and prompt version. Estimated cost remains zero/unavailable until deployment supplies the per-million-token rates for its chosen model; those rates are configuration, not live pricing lookup.
 

@@ -13,6 +13,7 @@ import {
   reconcileJobs,
   cleanUploads,
   HEARTBEAT,
+  RENDER_HEARTBEAT,
 } from '../packages/jobs/src/index.js';
 import { runMedia, inspectVideo } from '../packages/video-analysis/src/index.js';
 import { hashPassword, COOKIE } from '../apps/api/src/auth.js';
@@ -20,6 +21,8 @@ import { buildApp } from '../apps/api/src/app.js';
 import { ingest } from '../apps/worker/src/ingest.js';
 import { analyze } from '../apps/worker/src/analyze.js';
 import { rankCandidates } from '../apps/worker/src/rank.js';
+import { planShorts } from '../apps/worker/src/plan-shorts.js';
+import { renderShort } from '../apps/renderer/src/render.js';
 import type { UploadView, SourceView } from '../packages/shared/src/index.js';
 
 const base = getConfig();
@@ -81,7 +84,7 @@ async function account(label: string) {
 }
 function request(
   cookie: string,
-  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   url: string,
   payload?: object | Buffer,
   headers: Record<string, string> = {},
@@ -130,12 +133,17 @@ function startWorker(overrides = config) {
         ? analyze(db, storage, overrides, job.id)
         : job.kind === 'RANK'
           ? rankCandidates(db, storage, overrides, job.id)
-          : ingest(db, storage, overrides, job.id);
+          : job.kind === 'PLAN'
+            ? planShorts(db, overrides, job.id)
+            : ingest(db, storage, overrides, job.id);
     },
     { connection: redis, concurrency: 2 },
   );
   worker.on('error', (error) => console.error(error));
-  worker.on('completed', () => void reconcileJobs(db, queue));
+  worker.on(
+    'completed',
+    () => void reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']),
+  );
   return worker;
 }
 try {
@@ -333,12 +341,12 @@ try {
   const job = await db.jobRun.findFirstOrThrow({ where: { sourceId: source.id } });
   assert.equal(job.state, 'PENDING');
   assert.equal(await queue.getJob(job.id), undefined);
-  await reconcileJobs(db, queue);
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   assert.equal(await queue.getWaitingCount(), 1);
   pass('durable job intent dispatches once after queue unavailability');
   await (await queue.getJob(job.id))!.remove();
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   startWorker();
   await waitFor(
     async () =>
@@ -403,7 +411,7 @@ try {
       .statusCode,
     404,
   );
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   await waitFor(
     async () =>
       (await db.sourceVideo.findUniqueOrThrow({ where: { id: source.id } })).status === 'READY',
@@ -419,7 +427,7 @@ try {
     request(owner.cookie, 'POST', `/api/sources/${source.id}/analyze`),
   ]);
   assert.deepEqual(reanalysis.map((response) => response.statusCode).sort(), [202, 409]);
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   await waitFor(async () => {
     const latest = await db.jobRun.findFirstOrThrow({
       where: { sourceId: source.id, kind: 'ANALYZE' },
@@ -451,6 +459,121 @@ try {
   );
   assert.equal(analysisList.aiUsage.calls, 2);
   pass('manual reanalysis is serialized, reranked and preserves an explicit game override');
+  const planResponse = await request(owner.cookie, 'POST', `/api/sources/${source.id}/shorts`);
+  assert.equal(planResponse.statusCode, 202, planResponse.body);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
+  await waitFor(async () => {
+    const planning = await db.jobRun.findFirst({
+      where: { sourceId: source.id, kind: 'PLAN' },
+      orderBy: { createdAt: 'desc' },
+    });
+    return planning?.state === 'SUCCEEDED';
+  }, 'short concept planning');
+  assert.equal(await db.aiResultCache.count({ where: { sourceId: source.id } }), 3);
+  const shortsResponse = await request(owner.cookie, 'GET', '/api/shorts');
+  assert.equal(shortsResponse.statusCode, 200, shortsResponse.body);
+  const plannedShorts = shortsResponse.json<{
+    shorts: Array<{ id: string; state: string; game: string }>;
+  }>().shorts;
+  assert(plannedShorts.length > 0);
+  const planned = plannedShorts.find((item) => item.game === 'Fortnite')!;
+  assert.equal(planned.state, 'EDIT_PLANNED');
+  const shortDetail = await request(owner.cookie, 'GET', `/api/shorts/${planned.id}`);
+  assert.equal(shortDetail.statusCode, 200, shortDetail.body);
+  const shortJson = shortDetail.json<{
+    candidate: { concepts: unknown[] };
+    editPlans: Array<{
+      document: { outputDuration: number; hook: { start: number }; cropStrategy: string };
+    }>;
+    renders: Array<{ state: string }>;
+  }>();
+  assert.equal(shortJson.candidate.concepts.length, 3);
+  assert(shortJson.editPlans[0]!.document.outputDuration <= 60);
+  assert.equal(shortJson.editPlans[0]!.document.hook.start, 0);
+  assert.equal(shortJson.editPlans[0]!.document.cropStrategy, 'BACKGROUND_BLUR');
+  assert.equal(shortJson.renders[0]!.state, 'PENDING');
+  assert.equal((await request(other.cookie, 'GET', `/api/shorts/${planned.id}`)).statusCode, 404);
+  assert.equal(
+    (
+      await request(owner.cookie, 'POST', `/api/shorts/${planned.id}/review`, {
+        decision: 'APPROVED',
+      })
+    ).statusCode,
+    409,
+  );
+  const metadataUpdate = await request(
+    owner.cookie,
+    'PATCH',
+    `/api/shorts/${planned.id}/metadata`,
+    {
+      title: 'VISIBLE FORTNITE MOMENT',
+      description: 'A measured gameplay moment.',
+      hashtags: ['#fortnite', '#gaming'],
+    },
+  );
+  assert.equal(metadataUpdate.statusCode, 200, metadataUpdate.body);
+  assert.equal(await db.editDecisionList.count({ where: { shortId: planned.id } }), 2);
+  const pendingRender = await db.renderArtifact.findFirstOrThrow({
+    where: { shortId: planned.id, state: 'PENDING' },
+    include: { editDecisionList: true },
+  });
+  assert.equal(pendingRender.editDecisionList.version, 2);
+  await renderShort(db, storage, config, pendingRender.jobId);
+  const completedRender = await db.renderArtifact.findUniqueOrThrow({
+    where: { id: pendingRender.id },
+  });
+  assert.equal(completedRender.state, 'READY');
+  assert.equal(completedRender.width, 1080);
+  assert.equal(completedRender.height, 1920);
+  assert.equal(completedRender.videoCodec, 'h264');
+  assert.equal(completedRender.hasAudio, true);
+  assert(completedRender.storageKey);
+  const renderedMedia = await request(owner.cookie, 'GET', `/api/shorts/${planned.id}/media`);
+  assert.equal(renderedMedia.statusCode, 200, renderedMedia.body);
+  assert.equal(renderedMedia.headers['content-type'], 'video/mp4');
+  assert.equal(
+    (
+      await request(owner.cookie, 'POST', `/api/shorts/${planned.id}/review`, {
+        decision: 'APPROVED',
+      })
+    ).statusCode,
+    200,
+  );
+  const rerender = await request(owner.cookie, 'POST', `/api/shorts/${planned.id}/render`);
+  assert.equal(rerender.statusCode, 202, rerender.body);
+  assert.equal(
+    (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).reviewState,
+    'PENDING',
+  );
+  const settings = await request(owner.cookie, 'PATCH', '/api/settings/shorts', {
+    autopilotEnabled: false,
+    minimumHighlightScore: 60,
+    minimumConfidence: 55,
+    minimumQualityScore: 60,
+    preferredHashtags: ['#creator'],
+    bannedHashtags: ['#spoiler'],
+  });
+  assert.equal(settings.statusCode, 200, settings.body);
+  pass(
+    'concepts, versioned EDLs, a real 1080x1920 render, QC, media access, review gates, rerendering and settings are persisted and account-scoped',
+  );
+  assert.equal(
+    (await request(owner.cookie, 'POST', `/api/sources/${source.id}/analyze`)).statusCode,
+    409,
+  );
+  assert.equal(
+    (
+      await request(owner.cookie, 'PUT', `/api/sources/${source.id}/game`, {
+        game: 'EA Sports FC',
+      })
+    ).statusCode,
+    409,
+  );
+  assert.equal(
+    await db.generatedShort.count({ where: { sourceId: source.id } }),
+    plannedShorts.length,
+  );
+  pass('generated Shorts lock their source analysis and game evidence against invalidation');
   await ingest(db, storage, config, job.id);
   assert.equal((await db.jobRun.findUniqueOrThrow({ where: { id: job.id } })).attempt, 1);
   pass('duplicate job execution is a terminal-success no-op');
@@ -473,7 +596,7 @@ try {
   );
   pass('source isolation and byte-exact authorized download');
   const bad = await upload(owner.cookie, Buffer.from('not a video'), 'corrupt.mp4');
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   await waitFor(
     async () =>
       (await db.sourceVideo.findUniqueOrThrow({ where: { id: bad.source.id } })).status ===
@@ -492,7 +615,7 @@ try {
     request(owner.cookie, 'POST', `/api/sources/${bad.source.id}/retry`),
   ]);
   assert.deepEqual(retries.map((r) => r.statusCode).sort(), [202, 409]);
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   await waitFor(
     async () =>
       (await db.sourceVideo.findUniqueOrThrow({ where: { id: bad.source.id } })).status ===
@@ -502,7 +625,7 @@ try {
   pass('corrupt media fails visibly without wasteful retries; manual retry is serialized');
   await worker!.close();
   const restart = await upload(owner.cookie, content, 'after-restart.mp4');
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   assert.equal(
     (await db.sourceVideo.findUniqueOrThrow({ where: { id: restart.source.id } })).status,
     'UPLOADED',
@@ -527,7 +650,7 @@ try {
     (await db.jobRun.findUniqueOrThrow({ where: { id: transientJob.id } })).state,
     'RETRYING',
   );
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   startWorker();
   await waitFor(
     async () =>
@@ -539,7 +662,7 @@ try {
   pass('retryable tool failure records evidence and recovers on the next attempt');
   await worker!.close();
   const exhausted = await upload(owner.cookie, content, 'exhausted.mp4');
-  await reconcileJobs(db, queue);
+  await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
   startWorker({ ...config, FFPROBE_PATH: 'nonexistent-phase1-ffprobe' });
   await waitFor(
     async () =>
@@ -572,6 +695,7 @@ try {
   assert.equal(await db.uploadPart.count({ where: { uploadId: expired.id } }), 0);
   pass('expired uploads cannot finalize and temporary parts are reclaimed');
   await redis.set(HEARTBEAT, new Date().toISOString(), 'EX', 30);
+  await redis.set(RENDER_HEARTBEAT, new Date().toISOString(), 'EX', 30);
   assert.equal((await request(owner.cookie, 'GET', '/api/health')).statusCode, 200);
   const dashboard = (await request(owner.cookie, 'GET', '/api/dashboard')).json<{
     total: number;
