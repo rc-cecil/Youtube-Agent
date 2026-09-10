@@ -1,4 +1,4 @@
-# Phase 6 operations
+# Phase 7 operations
 
 ## Editorial planning
 
@@ -57,10 +57,16 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
 | `LOG_LEVEL`                                            | Structured log level                            |
 | `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
+| `ANALYTICS_SYNC_INTERVAL_MINUTES`                      | Analytics refresh interval; default six hours   |
+| `ANALYTICS_INITIAL_LOOKBACK_DAYS`                      | First-sync history window; default 90 days      |
 
 `YOUTUBE_MODE=mock` disables all provider calls. For live mode, enable the YouTube Data API, configure a Web OAuth client, register the exact `APP_URL/api/youtube/callback` redirect, then set `YOUTUBE_MODE=live`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a stable `YOUTUBE_TOKEN_KEY` containing 32 random bytes as 64 hex characters. Losing that key makes saved tokens and resumable sessions unrecoverable. Never expose it to the browser or rotate it without a credential migration.
 
 The worker polls publication records every ten seconds. It starts an official private resumable upload, persists the session, probes the acknowledged range before every chunk, schedules only after receiving a video ID, and verifies remote state. Five bounded attempts use provider Retry-After or exponential delay. `NEEDS_ATTENTION` requires an operator; reconnect authorization or inspect YouTube Studio before retrying. `MISSED` records a passed slot rather than silently changing its time. Disconnect does not cancel remote schedules.
+
+The worker also checks for due analytics work once a minute and creates at most one active sync per owner at the configured interval. A first sync captures the configured history window or the earliest known publication; later syncs refresh the latest 28 days while retaining prior immutable observations. Each run has three bounded attempts. Recent YouTube reporting can omit days, so absent rows are not converted to zero. A 403 on monetary metrics marks revenue unavailable without failing collected activity metrics. Reconnect a Phase 6 channel once to grant `youtube.readonly`, `yt-analytics.readonly`, and `yt-analytics-monetary.readonly` in addition to the publishing scope.
+
+Use **Sync now** for an operator-triggered refresh; the API limits this to four requests per hour and reuses an active run. Monitor `AnalyticsSyncRun` state/error plus `YouTubeConnection.analyticsState`, `revenueState`, and `analyticsSyncedAt`. Revenue values are YouTube estimates. USD/GHS are requested directly from the provider, and the UI labels locally calculated revenue per 1,000 captured views as derived.
 
 ## Recovery
 

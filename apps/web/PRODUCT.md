@@ -12,9 +12,9 @@ Gameplay creators upload their original recordings and manage a reliable source 
 
 ## Capabilities and constraints
 
-Phases 1–6 include owner authentication, resumable source uploads, analysis/ranking, versioned EDLs, Remotion rendering and QC, editorial slate planning, secure YouTube connection, private resumable publication, scheduling, reconciliation, and campaigns. All states come from the API. Analytics and learning are not implemented.
+Phases 1–7 include owner authentication, resumable source uploads, analysis/ranking, versioned EDLs, Remotion rendering and QC, editorial slate planning, secure YouTube connection, private resumable publication, scheduling, reconciliation, campaigns, immutable YouTube Analytics snapshots, and estimated revenue. All states and metrics come from the API. Learning, recommendations, and experiments are not implemented.
 
-The user approved clearly labeled previews of future features. Publishing controls are real and owner-scoped; analytics remains an explanatory preview. Existing routes and security boundaries remain intact.
+The user approved clearly labeled previews of future features. Publishing and analytics controls are real and owner-scoped; only Phase 8 learning remains an explanatory preview. Existing routes and security boundaries remain intact.
 
 ## Brand commitments
 
@@ -28,4 +28,4 @@ The existing Phase 1 application, architecture and verification documentation, t
 
 Preserve keyboard access, visible focus, descriptive errors, responsive layouts, readable contrast, and reduced-motion support. A decorative video must be muted and pausable. Keep the next real action easy to find, and distinguish future previews from available functions.
 
-Preview tabs are clearly labeled unavailable and never trigger analytics or learning. Live publication, edit, render/QC, and recording states originate from the API.
+Preview tabs are clearly labeled unavailable and never trigger learning. Live publication, analytics, revenue, edit, render/QC, and recording states originate from the API.

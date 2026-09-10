@@ -23,6 +23,7 @@ import {
 import { UploadService } from './uploads.js';
 import { registerEditorial, invalidateSlates } from './editorial.js';
 import { registerYouTube } from './youtube.js';
+import { registerAnalytics } from './analytics.js';
 
 export async function buildApp(
   db: PrismaClient,
@@ -47,6 +48,7 @@ export async function buildApp(
     uploads = new UploadService(db, storage, config);
   registerEditorial(app, db, config);
   registerYouTube(app, db, config, youtubeTransport);
+  registerAnalytics(app, db, config);
   const dummyHash = await hashPassword(newToken());
   const cookieOptions = {
     httpOnly: true,
@@ -132,7 +134,7 @@ export async function buildApp(
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 6,
+    phase: 7,
     storage: config.STORAGE_PROVIDER,
     aiMode: config.AI_MODE,
     aiModel:
@@ -803,7 +805,7 @@ export async function buildApp(
       services: { database, redis: redisStatus, storage: storageStatus, worker, renderer },
       heartbeat,
       rendererHeartbeat,
-      phase: 6,
+      phase: 7,
     };
   });
   return app;

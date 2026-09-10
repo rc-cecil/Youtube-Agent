@@ -13,7 +13,7 @@ import {
   nonce,
   redirectUri,
   request,
-  scope,
+  scopes,
   seal,
   unseal,
 } from '../../../packages/youtube/src/index.js';
@@ -37,7 +37,16 @@ export function registerYouTube(
   app.get('/api/youtube', { preHandler }, async (req) => {
     const connection = await db.youTubeConnection.findUnique({
       where: { userId: req.userId },
-      select: { channelId: true, title: true, avatar: true, subscribers: true, state: true },
+      select: {
+        channelId: true,
+        title: true,
+        avatar: true,
+        subscribers: true,
+        state: true,
+        analyticsState: true,
+        revenueState: true,
+        analyticsSyncedAt: true,
+      },
     });
     const publications = await db.youTubePublication.findMany({
       where: { userId: req.userId },
@@ -138,7 +147,8 @@ export function registerYouTube(
         },
         transport,
       );
-      if (!token.refresh_token || !token.scope?.split(' ').includes(scope))
+      const grantedScopes = token.scope?.split(' ').filter(Boolean) ?? [];
+      if (!token.refresh_token || !scopes.every((required) => grantedScopes.includes(required)))
         throw new Error('Required offline access was not granted');
       const response = await request(
         'https://www.googleapis.com/youtube/v3/channels?part=snippet,statistics&mine=true',
@@ -188,6 +198,10 @@ export function registerYouTube(
           refreshToken: seal(token.refresh_token!, c.YOUTUBE_TOKEN_KEY, state.userId),
           expiresAt: new Date(Date.now() + token.expires_in * 1000),
           state: 'CONNECTED',
+          scopes: grantedScopes,
+          analyticsState: 'PENDING',
+          revenueState: 'PENDING',
+          analyticsSyncedAt: null,
         };
         await tx.youTubeConnection.upsert({
           where: { userId: state.userId },

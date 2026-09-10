@@ -19,6 +19,7 @@ import { rankCandidates } from './rank.js';
 import { planShorts } from './plan-shorts.js';
 import { editorialTick } from './editorial.js';
 import { youtubeTick } from './youtube.js';
+import { analyticsTick } from './analytics.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -89,6 +90,20 @@ const youtubeInterval = setInterval(() => {
       youtubeBusy = false;
     });
 }, 10000);
+let analyticsTask: Promise<void> | undefined;
+let analyticsBusy = false;
+const analyticsInterval = setInterval(() => {
+  if (analyticsBusy) return;
+  analyticsBusy = true;
+  analyticsTask = analyticsTick(db, config)
+    .catch(() => logger.error('YouTube analytics synchronization interrupted'))
+    .finally(() => {
+      analyticsBusy = false;
+    });
+}, 60000);
+void analyticsTick(db, config).catch(() =>
+  logger.error('Initial YouTube analytics synchronization interrupted'),
+);
 let closing = false;
 async function close() {
   if (closing) return;
@@ -96,7 +111,9 @@ async function close() {
   clearInterval(interval);
   clearInterval(editorialInterval);
   clearInterval(youtubeInterval);
+  clearInterval(analyticsInterval);
   await youtubeTask;
+  await analyticsTask;
   await editorialTask;
   await worker.close();
   await queue.close();

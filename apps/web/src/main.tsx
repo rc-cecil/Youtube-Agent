@@ -36,6 +36,8 @@ import {
   Sparkles,
   WandSparkles,
   CheckCircle2,
+  ChartNoAxesCombined,
+  WalletCards,
 } from 'lucide-react';
 import type { EditDecisionList } from '../../../packages/remotion/src/edl.js';
 import type {
@@ -48,6 +50,7 @@ import type {
 } from '../../../packages/shared/src/index.js';
 import { api, post } from './api.js';
 import { DashboardHero } from '@/components/dashboard-hero';
+import { AnalyticsDashboard, ShortAnalyticsSummary } from '@/components/analytics-dashboard';
 import { FuturePreview } from '@/components/future-preview';
 import { EditorialCalendar, ReuseDeclaration } from '@/components/editorial-calendar';
 import { Button } from '@/components/ui/button';
@@ -263,6 +266,7 @@ function Dashboard() {
       </PageTitle>
       <ErrorBox message={error} />
       <DashboardHero />
+      <AnalyticsDashboard mode="overview" />
       <div className="stats">
         {[
           ['Source recordings', data?.total, FolderOpen],
@@ -358,6 +362,30 @@ function Dashboard() {
         </section>
       </div>
       <FuturePreview />
+    </>
+  );
+}
+function AnalyticsPage() {
+  return (
+    <>
+      <PageTitle
+        eyebrow="YOUTUBE ANALYTICS"
+        title="Know what held attention."
+        description="Verified channel and Short-level observations, retained as daily snapshots."
+      />
+      <AnalyticsDashboard />
+    </>
+  );
+}
+function RevenuePage() {
+  return (
+    <>
+      <PageTitle
+        eyebrow="REVENUE"
+        title="Estimated earnings, in context."
+        description="Provider-reported estimates in USD or GHS, with transparent local attribution."
+      />
+      <AnalyticsDashboard mode="revenue" />
     </>
   );
 }
@@ -1098,8 +1126,8 @@ function ShortsPage() {
         )}
       </section>
       <p className="phase-note">
-        Every video remains in manual review by default. Publishing and daily slate assignment begin
-        in later phases.
+        Every video remains in manual review by default. Approved Shorts can join a daily slate,
+        publish through the connected channel, and receive verified analytics snapshots.
       </p>
     </>
   );
@@ -1302,6 +1330,7 @@ function ShortDetail() {
               </dl>
             </section>
           </div>
+          <ShortAnalyticsSummary shortId={data.id} />
           <section className="panel">
             <div className="panel-heading">
               <h2>Concept alternatives</h2>
@@ -1563,8 +1592,8 @@ function HealthPage() {
           : 'Not available'}
       </p>
       <p className="phase-note">
-        Phase 4 separates media analysis from resource-intensive Remotion rendering. Publishing and
-        scheduling remain unavailable until their implementation phases.
+        Media analysis, rendering, publication, and analytics run outside browser requests. Durable
+        database state remains the recovery source of truth.
       </p>
     </>
   );
@@ -1838,6 +1867,8 @@ function App() {
     ['/analysis', 'Analysis', ScanSearch],
     ['/shorts', 'Shorts', Clapperboard],
     ['/calendar', 'Editorial calendar', Clock3],
+    ['/analytics', 'Analytics', ChartNoAxesCombined],
+    ['/revenue', 'Revenue', WalletCards],
     ['/queue', 'Job queue', Clock3],
     ['/health', 'System health', Activity],
     ['/settings', 'Settings', Settings],
@@ -1916,13 +1947,15 @@ function App() {
             <Route path="/shorts" element={<ShortsPage />} />
             <Route path="/shorts/:id" element={<ShortDetail />} />
             <Route path="/calendar" element={<EditorialCalendar />} />
+            <Route path="/analytics" element={<AnalyticsPage />} />
+            <Route path="/revenue" element={<RevenuePage />} />
             <Route path="/queue" element={<QueuePage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 6</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 7</span>
           </footer>
         </main>
       </div>

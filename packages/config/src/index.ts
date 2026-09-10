@@ -47,6 +47,8 @@ const schema = z.object({
     .string()
     .default('')
     .refine((v) => !v || /^[0-9a-fA-F]{64}$/.test(v), 'Use a 32-byte hex encryption key'),
+  ANALYTICS_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
+  ANALYTICS_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
   AI_EMBEDDING_MODEL: z
     .string()
     .optional()

@@ -65,6 +65,9 @@ model User {
   oauthStates YouTubeOAuthState[]
   publications YouTubePublication[]
   campaigns Campaign[]
+  analyticsRuns AnalyticsSyncRun[]
+  analyticsSnapshots AnalyticsSnapshot[]
+  revenueSnapshots RevenueSnapshot[]
 }
 
 model YouTubeConnection {
@@ -79,6 +82,10 @@ model YouTubeConnection {
   refreshToken String
   expiresAt DateTime
   state String @default("CONNECTED")
+  scopes String[] @default([])
+  analyticsState String @default("PENDING")
+  revenueState String @default("PENDING")
+  analyticsSyncedAt DateTime?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -115,7 +122,82 @@ model YouTubePublication {
   cancelRequested Boolean @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  analytics AnalyticsSnapshot[]
+  revenues RevenueSnapshot[]
   @@index([state, nextAttemptAt])
+}
+
+model AnalyticsSyncRun {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId String
+  startDate String
+  endDate String
+  state JobState @default(PENDING)
+  attempt Int @default(0)
+  availableAt DateTime @default(now())
+  startedAt DateTime?
+  finishedAt DateTime?
+  errorMessage String?
+  createdAt DateTime @default(now())
+  analytics AnalyticsSnapshot[]
+  revenues RevenueSnapshot[]
+  @@index([state, availableAt])
+  @@index([userId, createdAt])
+}
+
+model AnalyticsSnapshot {
+  id String @id @default(uuid())
+  reportKey String @unique
+  runId String
+  run AnalyticsSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationId String?
+  publication YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  channelId String
+  videoId String?
+  scope String
+  reportDate String
+  views BigInt?
+  engagedViews BigInt?
+  estimatedMinutesWatched Decimal? @db.Decimal(20, 6)
+  averageViewDuration Decimal? @db.Decimal(20, 6)
+  averageViewPercentage Decimal? @db.Decimal(20, 6)
+  likes BigInt?
+  comments BigInt?
+  shares BigInt?
+  subscribersGained BigInt?
+  subscribersLost BigInt?
+  collectedAt DateTime @default(now())
+  @@index([userId, scope, reportDate])
+  @@index([videoId, reportDate])
+}
+
+model RevenueSnapshot {
+  id String @id @default(uuid())
+  reportKey String @unique
+  runId String
+  run AnalyticsSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationId String?
+  publication YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  channelId String
+  videoId String?
+  scope String
+  reportDate String
+  currency String
+  estimatedRevenue Decimal? @db.Decimal(20, 6)
+  estimatedAdRevenue Decimal? @db.Decimal(20, 6)
+  estimatedPremiumRevenue Decimal? @db.Decimal(20, 6)
+  monetizedPlaybacks BigInt?
+  playbackBasedCpm Decimal? @db.Decimal(20, 6)
+  availability String @default("AVAILABLE")
+  collectedAt DateTime @default(now())
+  @@index([userId, currency, scope, reportDate])
+  @@index([videoId, reportDate])
 }
 
 model Campaign {

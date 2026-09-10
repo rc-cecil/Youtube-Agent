@@ -1,15 +1,15 @@
-import { BarChart3, LockKeyhole, ArrowRight } from 'lucide-react';
+import { BrainCircuit, LockKeyhole, ArrowRight } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 
 const previews = [
   {
-    title: 'Understand your performance',
-    icon: BarChart3,
-    text: 'A future analytics workspace for verified performance snapshots and learning from published Shorts.',
-    action: 'Phase 7 analytics',
-    stages: ['Collect snapshots', 'Compare performance', 'Learn from results'],
+    title: 'Learn from performance',
+    icon: BrainCircuit,
+    text: 'A future learning loop that turns verified analytics into explainable recommendations without changing your publishing policy automatically.',
+    action: 'Phase 8 learning',
+    stages: ['Compare outcomes', 'Find evidence', 'Suggest experiments'],
   },
 ] as const;
 
@@ -52,7 +52,7 @@ export function FuturePreview() {
                 <LockKeyhole data-icon="inline-start" />
                 Planned feature
               </Button>
-              <span>No analytics collection or strategy learning occurs in this preview.</span>
+              <span>No strategy learning or automatic policy change occurs in this preview.</span>
             </div>
           </TabsContent>
         ))}

@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-10T16:31:03Z",
+  "title": "Design System: Shorts Studio",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Signal Lime",
+        "canonical": "#d3ef7a",
+        "tonalRamp": ["#1d240a", "#344313", "#53691f", "#78932f", "#9fbe4c", "#d3ef7a", "#e5f7a8", "#f5fbdc"]
+      },
+      "background": {
+        "role": "neutral",
+        "displayName": "Desk Graphite",
+        "canonical": "#111315",
+        "tonalRamp": ["#111315", "#191c1f", "#202428", "#2b3035", "#454d55", "#65717a", "#a7afb5", "#f1f3ec"]
+      },
+      "foreground": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "canonical": "#f1f3ec",
+        "tonalRamp": ["#242521", "#3d3f39", "#5d6057", "#7f8278", "#a3a69d", "#c8cbc2", "#e0e2db", "#f1f3ec"]
+      },
+      "chart-secondary": {
+        "role": "secondary",
+        "displayName": "Public View Blue",
+        "canonical": "#b8d0e0",
+        "tonalRamp": ["#17232b", "#253945", "#365365", "#4c7188", "#6d91aa", "#94b3c8", "#b8d0e0", "#e8f1f6"]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Operational Display",
+        "purpose": "Page headings and high-emphasis metric values."
+      },
+      "title": {
+        "displayName": "Panel Title",
+        "purpose": "Card, panel, and ranked-item headings."
+      },
+      "body": {
+        "displayName": "Interface Body",
+        "purpose": "Instructions, descriptions, controls, and tables."
+      },
+      "label": {
+        "displayName": "Evidence Label",
+        "purpose": "Metadata, provenance, statuses, and chart keys."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "micro",
+        "value": "80ms",
+        "purpose": "Icon and immediate tactile feedback."
+      },
+      {
+        "name": "quick",
+        "value": "150ms",
+        "purpose": "Press, hover, and compact control transitions."
+      },
+      {
+        "name": "fast",
+        "value": "250ms",
+        "purpose": "State changes and disclosures."
+      },
+      {
+        "name": "medium",
+        "value": "350ms",
+        "purpose": "The single analytics workspace entrance."
+      },
+      {
+        "name": "smooth-out",
+        "value": "cubic-bezier(0.22, 1, 0.36, 1)",
+        "purpose": "Default positional easing for deliberate state feedback."
+      }
+    ],
+    "breakpoints": [
+      { "name": "narrow-desktop", "value": "1180px" },
+      { "name": "mobile-shell", "value": "760px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The next meaningful action, using the sole accent color.",
+      "html": "<button class=\"ds-btn-primary\">Sync now</button>",
+      "css": ".ds-btn-primary { min-height: 44px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); font: 500 14px 'Geist Variable', sans-serif; transition: background-color 150ms, transform 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-primary:hover { background: color-mix(in srgb, var(--primary), white 12%); } .ds-btn-primary:active { transform: translateY(1px); } .ds-btn-primary:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "A secondary operation that remains visible without competing with the primary action.",
+      "html": "<button class=\"ds-btn-outline\">View details</button>",
+      "css": ".ds-btn-outline { min-height: 44px; padding: 10px 16px; border: 1px solid var(--graphite-700); border-radius: 8px; background: var(--background); color: var(--foreground); font: 500 14px 'Geist Variable', sans-serif; transition: background-color 150ms, transform 150ms cubic-bezier(0.22,1,0.36,1); } .ds-btn-outline:hover { background: var(--muted); } .ds-btn-outline:active { transform: translateY(1px); } .ds-btn-outline:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }"
+    },
+    {
+      "name": "Text Input",
+      "kind": "input",
+      "refersTo": "input",
+      "description": "Compact dark field with persistent border and explicit focus treatment.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search recordings\" />",
+      "css": ".ds-input { min-height: 40px; width: 100%; padding: 11px 14px; border: 1px solid var(--input); border-radius: 8px; background: var(--card); color: var(--foreground); font: 400 14px 'Geist Variable', sans-serif; transition: border-color 150ms, box-shadow 150ms; } .ds-input::placeholder { color: var(--muted-foreground); } .ds-input:hover { border-color: var(--graphite-700); } .ds-input:focus-visible { border-color: var(--ring); outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 35%, transparent); }"
+    },
+    {
+      "name": "Workspace Card",
+      "kind": "card",
+      "refersTo": "card",
+      "description": "A tonal operational container with a fine seam and no resting shadow.",
+      "html": "<section class=\"ds-card\"><h3>Verified performance</h3><p>Last synced moments ago</p></section>",
+      "css": ".ds-card { padding: 24px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--foreground); } .ds-card h3 { margin: 0; font: 600 16px/1.375 'Manrope Variable', sans-serif; } .ds-card p { margin: 6px 0 0; color: var(--muted-foreground); font: 400 11px/1.45 'Geist Variable', sans-serif; }"
+    },
+    {
+      "name": "Active Navigation Item",
+      "kind": "nav",
+      "description": "The current workspace route, expressed with the single signal color.",
+      "html": "<a class=\"ds-nav-active\" href=\"#\">Analytics</a>",
+      "css": ".ds-nav-active { display: flex; align-items: center; min-height: 44px; padding: 12px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); font: 500 14px 'Geist Variable', sans-serif; text-decoration: none; transition: background-color 150ms; } .ds-nav-active:hover { background: color-mix(in srgb, var(--primary), white 12%); } .ds-nav-active:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }"
+    },
+    {
+      "name": "Status Badge",
+      "kind": "chip",
+      "description": "A compact status that pairs semantic wording with a restrained tint.",
+      "html": "<span class=\"ds-badge\">Synced</span>",
+      "css": ".ds-badge { display: inline-flex; align-items: center; min-height: 20px; padding: 2px 8px; border: 1px solid color-mix(in srgb, var(--success) 18%, var(--card)); border-radius: 999px; background: color-mix(in srgb, var(--success) 7%, var(--card)); color: var(--success); font: 500 11px 'Geist Variable', sans-serif; }"
+    },
+    {
+      "name": "Analytics Series Key",
+      "kind": "custom",
+      "description": "A persistent non-hover legend for public and engaged view series.",
+      "html": "<div class=\"ds-chart-key\"><span class=\"ds-series-public\">Public views</span><span class=\"ds-series-engaged\">Engaged views</span></div>",
+      "css": ".ds-chart-key { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--muted-foreground); font: 400 11px 'Geist Variable', sans-serif; } .ds-chart-key span { display: inline-flex; align-items: center; gap: 7px; } .ds-chart-key span::before { width: 14px; height: 2px; border-radius: 999px; background: var(--chart-2); content: ''; } .ds-chart-key .ds-series-engaged::before { background: var(--chart-1); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Source-Footage Desk",
+    "overview": "Shorts Studio feels like a calm production desk: dark graphite equipment surfaces, warm readable type, and one lime action signal. It is dense enough for active creator work without turning analytics, publishing, or media review into a decorative dashboard. The supplied gaming video is the Dashboard's sole focal image. Operational routes keep imagery subordinate to evidence, state, and action. Familiar controls, honest unavailable states, and restrained motion let the workspace disappear into the task.",
+    "keyCharacteristics": [
+      "Graphite tonal layers separated by fine borders rather than shadows.",
+      "Lime reserved for primary actions, current selection, and meaningful state.",
+      "Compact metric rails, tabular numerals, and explicit data provenance.",
+      "One responsive shell shared by capture, editorial, publishing, analytics, and revenue."
+    ],
+    "rules": [
+      {
+        "name": "The One Signal Rule",
+        "body": "Lime identifies action, selection, or live meaning; it never fills inactive decoration.",
+        "section": "colors"
+      },
+      {
+        "name": "The Truth Has a Label Rule",
+        "body": "Success, warning, failure, unavailable, estimated, and derived states always include words or structure in addition to hue.",
+        "section": "colors"
+      },
+      {
+        "name": "The Operate-Type Rule",
+        "body": "Controls and data labels stay fixed-size and compact; no fluid display typography enters task surfaces.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tonal-Layer Rule",
+        "body": "A surface earns separation through background value and border contrast before any shadow is considered.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "Do preserve semantic tokens, visible focus, readable labels, and responsive source rows.",
+      "Do keep operational hierarchy compact enough that the next decision remains nearby.",
+      "Do provide textual and tabular alternatives for color-coded or plotted data.",
+      "Do keep the supplied hero video separate from uploaded source media and preserve its provenance.",
+      "Do limit motion to 150–250ms state feedback, explicit progress, and intentional disclosure; honor reduced motion and keyboard input."
+    ],
+    "donts": [
+      "Don't add another dashboard shell or hero to Analytics, Revenue, or future routes.",
+      "Don't render retained Efferd references as product UI; they inform hierarchy only.",
+      "Don't fabricate metrics, fill missing dates with zero, or enable Phase 8 processing through previews.",
+      "Don't animate routine polling or chart refreshes, or make animation necessary to understand an action.",
+      "Don't imitate glass, metal, bevels, or other physical materials with CSS effects."
+    ]
+  }
+}

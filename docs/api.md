@@ -1,4 +1,4 @@
-# Phase 6 REST contract
+# Phase 7 REST contract
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 
@@ -49,6 +49,17 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 
 ## Upload protocol
 
+## Analytics endpoints
+
+| Method and path             | Behavior                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `POST /analytics/sync`      | Queue or return the owner's active analytics sync; four requests/hour                                         |
+| `GET /analytics?window=28`  | `7`, `28`, `90`, or `lifetime` channel totals, daily series, top Shorts, today's slate, and campaign progress |
+| `GET /analytics/shorts/:id` | Owner-scoped captured lifetime activity, estimated USD revenue, and publication state for one Short           |
+| `GET /revenue?currency=USD` | `USD` or `GHS` estimated periods, top Shorts, and grouped attribution                                         |
+
+Snapshot values can be `null` when a metric is not returned. Missing days are omitted rather than emitted as zero. Money is provider-reported estimated revenue; `derivedRevenuePerThousandViews` is the application's explicitly labeled calculation over captured views, not an official YouTube RPM. A monetary 403 leaves non-monetary analytics usable and returns the specified unavailable state/message.
+
 ## YouTube endpoints
 
 | Method and path                         | Behavior                                                                             |
@@ -74,4 +85,4 @@ After ranking, planning creates three concepts per configured finalist and compi
 
 Finalization streams large files and may take time. Proxies permit a 15-minute finalization response; chunk requests are bounded at 16 MiB. Expired sessions cannot accept data. Original downloads stream without loading the file into memory.
 
-Every private lookup is owner-filtered, including derived assets, scores, concepts, EDLs, renders, media, review decisions, overrides, downloads, retries, OAuth state, channel credentials, publications, and campaigns. Someone else's resource returns 404. A Short cannot be approved until its newest render has passed QC. Rerendering resets approval to PENDING. Server infrastructure settings and account provisioning are environment/CLI operations. The application exposes no public registration or password-recovery endpoints; Phase 6 adds authenticated Google OAuth, scheduling, and publication endpoints only.
+Every private lookup is owner-filtered, including derived assets, scores, concepts, EDLs, renders, media, review decisions, overrides, downloads, retries, OAuth state, channel credentials, publications, campaigns, sync runs, and analytics/revenue snapshots. Someone else's resource returns 404 or an empty disconnected view, as appropriate. A Short cannot be approved until its newest render has passed QC. Rerendering resets approval to PENDING. Server infrastructure settings and account provisioning are environment/CLI operations. The application exposes no public registration or password-recovery endpoints.

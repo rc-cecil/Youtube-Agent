@@ -5,6 +5,7 @@ import type { Config } from '../packages/config/src/index.js';
 import type { Storage } from '../packages/storage/src/index.js';
 import { buildApp } from '../apps/api/src/app.js';
 import { processPublication } from '../apps/worker/src/youtube.js';
+import { processAnalyticsRun } from '../apps/worker/src/analytics.js';
 import { scope, type RemoteVideo } from '../packages/youtube/src/index.js';
 
 export async function verifyYouTube(
@@ -28,7 +29,8 @@ export async function verifyYouTube(
   let uploaded = false,
     loseCompletion = true,
     initiations = 0,
-    updates = 0;
+    updates = 0,
+    denyRevenue = false;
   let video: RemoteVideo = {
     id: 'testvideo01',
     snippet: { channelId: 'test-channel', title: 'Fixture' },
@@ -44,6 +46,42 @@ export async function verifyYouTube(
         expires_in: 3600,
         scope,
       });
+    if (url.startsWith('https://youtubeanalytics.googleapis.com/v2/reports')) {
+      const query = new URL(url).searchParams;
+      const metrics = query.get('metrics')!.split(',');
+      if (denyRevenue && metrics.includes('estimatedRevenue'))
+        return new Response(null, { status: 403 });
+      const dimensions = query.get('dimensions')!.split(',');
+      const names = [...dimensions, ...metrics];
+      const values: Record<string, string | number> = {
+        day: query.get('endDate')!,
+        video: 'testvideo01',
+        views: 120,
+        engagedViews: 80,
+        estimatedMinutesWatched: 42,
+        averageViewDuration: 31,
+        averageViewPercentage: 72,
+        likes: 10,
+        comments: 2,
+        shares: 3,
+        subscribersGained: 4,
+        subscribersLost: 1,
+        estimatedRevenue: query.get('currency') === 'GHS' ? 18 : 1.5,
+        estimatedAdRevenue: query.get('currency') === 'GHS' ? 12 : 1,
+        estimatedRedPartnerRevenue: query.get('currency') === 'GHS' ? 6 : 0.5,
+        monetizedPlaybacks: 60,
+        playbackBasedCpm: query.get('currency') === 'GHS' ? 30 : 2.5,
+      };
+      return Response.json({
+        kind: 'youtubeAnalytics#resultTable',
+        columnHeaders: names.map((name) => ({
+          name,
+          columnType: dimensions.includes(name) ? 'DIMENSION' : 'METRIC',
+          dataType: dimensions.includes(name) ? 'STRING' : 'FLOAT',
+        })),
+        rows: [names.map((name) => values[name]!)],
+      });
+    }
     if (url.includes('/youtube/v3/channels?'))
       return Response.json({
         items: [
@@ -179,6 +217,69 @@ export async function verifyYouTube(
     pass(
       'YouTube upload recovers lost completion through the saved session without duplicate uploads',
     );
+    const sync = await call('POST', '/api/analytics/sync');
+    assert.equal(sync.statusCode, 202, sync.body);
+    const syncId = sync.json<{ id: string }>().id;
+    await processAnalyticsRun(db, config, syncId, transport);
+    const processedSync = await db.analyticsSyncRun.findUniqueOrThrow({ where: { id: syncId } });
+    assert.equal(
+      await db.analyticsSnapshot.count({ where: { runId: syncId } }),
+      2,
+      `analytics run ${processedSync.state}: ${processedSync.errorMessage ?? 'no error'}`,
+    );
+    assert.equal(await db.revenueSnapshot.count({ where: { runId: syncId } }), 4);
+    const count = await db.analyticsSnapshot.count();
+    await processAnalyticsRun(db, config, syncId, transport);
+    assert.equal(await db.analyticsSnapshot.count(), count);
+    const analytics = (await call('GET', '/api/analytics?window=28')).json<{
+      totals: { views: string };
+      topShorts: unknown[];
+    }>();
+    assert.equal(analytics.totals.views, '120');
+    assert.equal(analytics.topShorts.length, 1);
+    assert.equal(
+      (await call('GET', '/api/analytics?window=28', undefined, otherCookie)).json<{
+        connected: boolean;
+      }>().connected,
+      false,
+    );
+    const revenue = (await call('GET', '/api/revenue?currency=GHS')).json<{
+      periods: { lifetimeCaptured: { estimatedRevenue: number } };
+      topShorts: Array<{ game: string; estimatedRevenue: number }>;
+      attribution: { byGame: Array<{ label: string; estimatedRevenue: number }> };
+    }>();
+    assert.equal(revenue.periods.lifetimeCaptured.estimatedRevenue, 18);
+    assert.equal(revenue.topShorts[0]?.estimatedRevenue, 18);
+    assert.equal(revenue.attribution.byGame[0]?.label, 'Fortnite');
+    const shortAnalytics = (await call('GET', `/api/analytics/shorts/${shortId}`)).json<{
+      publication: { videoId: string };
+      totals: { engagedViews: string };
+      estimatedRevenueUsd: number;
+    }>();
+    assert.equal(shortAnalytics.publication.videoId, 'testvideo01');
+    assert.equal(shortAnalytics.totals.engagedViews, '80');
+    assert.equal(shortAnalytics.estimatedRevenueUsd, 1.5);
+    pass(
+      'YouTube Analytics snapshots and estimated revenue are durable, idempotent and owner-scoped',
+    );
+    await db.analyticsSyncRun.update({
+      where: { id: syncId },
+      data: { finishedAt: new Date(0) },
+    });
+    denyRevenue = true;
+    const denied = await call('POST', '/api/analytics/sync');
+    const deniedId = denied.json<{ id: string }>().id;
+    await processAnalyticsRun(db, config, deniedId, transport);
+    assert.equal(
+      (await db.youTubeConnection.findUniqueOrThrow({ where: { userId: owner.user.id } }))
+        .revenueState,
+      'UNAVAILABLE',
+    );
+    assert.equal(
+      (await db.analyticsSyncRun.findUniqueOrThrow({ where: { id: deniedId } })).state,
+      'SUCCEEDED',
+    );
+    pass('monetary analytics denial remains unavailable without inventing zero revenue');
     assert.equal((await call('POST', `/api/youtube/publications/${id}/cancel`)).statusCode, 200);
     assert.equal((await pump()).state, 'CANCELLED');
     assert.equal(video.status.privacyStatus, 'private');

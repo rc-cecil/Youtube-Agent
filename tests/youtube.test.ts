@@ -71,6 +71,9 @@ describe('YouTube security and provider contracts', () => {
     expect(auth.searchParams.get('code_challenge_method')).toBe('S256');
     expect(auth.searchParams.get('state')).toBe('state');
     expect(auth.searchParams.get('access_type')).toBe('offline');
+    expect(auth.searchParams.get('include_granted_scopes')).toBe('true');
+    expect(auth.searchParams.get('scope')).toContain('yt-analytics.readonly');
+    expect(auth.searchParams.get('scope')).toContain('yt-analytics-monetary.readonly');
     expect(auth.href).not.toContain('test-secret');
   });
   it('accepts only the trusted resumable upload endpoint', () => {

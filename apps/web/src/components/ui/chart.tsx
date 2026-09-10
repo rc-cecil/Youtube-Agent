@@ -53,6 +53,9 @@ function ChartContainer({
 }) {
   const uniqueId = React.useId();
   const chartId = `chart-${id ?? uniqueId.replace(/:/g, '')}`;
+  const usesNativeResponsiveSizing =
+    React.isValidElement(children) &&
+    Boolean((children.props as { responsive?: boolean }).responsive);
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -66,9 +69,13 @@ function ChartContainer({
         {...props}
       >
         <ChartStyle id={chartId} config={config} />
-        <RechartsPrimitive.ResponsiveContainer initialDimension={initialDimension}>
-          {children}
-        </RechartsPrimitive.ResponsiveContainer>
+        {usesNativeResponsiveSizing ? (
+          children
+        ) : (
+          <RechartsPrimitive.ResponsiveContainer initialDimension={initialDimension}>
+            {children}
+          </RechartsPrimitive.ResponsiveContainer>
+        )}
       </div>
     </ChartContext.Provider>
   );

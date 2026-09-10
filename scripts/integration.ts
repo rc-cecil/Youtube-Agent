@@ -611,6 +611,7 @@ try {
       localDate: addDays(planDate, 1),
       state: 'RUNNING',
       attempt: 1,
+      availableAt: new Date(Date.now() - 1000),
       leaseUntil: new Date(Date.now() - 1000),
     },
   });

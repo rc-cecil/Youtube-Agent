@@ -1,8 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import type { Config } from '../../config/src/index.js';
-
-export const scope = 'https://www.googleapis.com/auth/youtube.force-ssl';
+export const scopes = [
+  'https://www.googleapis.com/auth/youtube.force-ssl',
+  'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/yt-analytics.readonly',
+  'https://www.googleapis.com/auth/yt-analytics-monetary.readonly',
+] as const;
+export const scope = scopes.join(' ');
 export const digest = (value: string) => createHash('sha256').update(value).digest('base64url');
 export const nonce = () => randomBytes(32).toString('base64url');
 export function seal(value: string, key: string, owner: string) {
@@ -34,6 +39,7 @@ export function authorizationUrl(c: Config, state: string, verifier: string) {
     scope,
     access_type: 'offline',
     prompt: 'consent',
+    include_granted_scopes: 'true',
     state,
     code_challenge: digest(verifier),
     code_challenge_method: 'S256',
