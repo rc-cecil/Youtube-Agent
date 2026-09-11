@@ -218,9 +218,11 @@ export function compare(a: Candidate, b: Candidate) {
 }
 export function roleScore(c: Candidate, role: Role) {
   const s = (key: string) => c.scores[key] ?? 0;
+  const predicted = c.scores.predictedPerformanceScore ?? s('highlightScore');
   if (role === 'HERO')
     return (
-      0.3 * s('highlightScore') +
+      0.2 * s('highlightScore') +
+      0.1 * predicted +
       0.15 * s('hookPotential') +
       0.15 * s('retentionPotential') +
       0.1 * s('emotionalReaction') +

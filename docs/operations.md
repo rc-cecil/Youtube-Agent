@@ -1,4 +1,6 @@
-# Phase 7 operations
+# Phase 8 operations
+
+Performance learning runs after fresh analytics on `LEARNING_INTERVAL_MINUTES`. Operators can request a run from AI Insights. `LEARNING_MIN_SAMPLE_SIZE` gates comparisons and `LEARNING_MAX_ADJUSTMENT` caps any single recommendation. Runs lease work for 15 minutes and retry at most three times. Exact 1h/6h observations remain unavailable with the current daily provider source; do not backfill them with estimates. Strategy history is append-only: supersede prior active versions rather than editing their evidence.
 
 ## Editorial planning
 

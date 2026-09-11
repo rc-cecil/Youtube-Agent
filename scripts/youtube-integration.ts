@@ -6,6 +6,7 @@ import type { Storage } from '../packages/storage/src/index.js';
 import { buildApp } from '../apps/api/src/app.js';
 import { processPublication } from '../apps/worker/src/youtube.js';
 import { processAnalyticsRun } from '../apps/worker/src/analytics.js';
+import { processLearningRun } from '../apps/worker/src/learning.js';
 import { scope, type RemoteVideo } from '../packages/youtube/src/index.js';
 
 export async function verifyYouTube(
@@ -261,6 +262,61 @@ export async function verifyYouTube(
     assert.equal(shortAnalytics.estimatedRevenueUsd, 1.5);
     pass(
       'YouTube Analytics snapshots and estimated revenue are durable, idempotent and owner-scoped',
+    );
+    const originalPublication = await db.youTubePublication.findUniqueOrThrow({ where: { id } });
+    await db.youTubePublication.update({
+      where: { id },
+      data: { state: 'PUBLISHED', publishAt: new Date(Date.now() - 25 * 3_600_000) },
+    });
+    const requestedLearning = await call('POST', '/api/learning/run');
+    assert.equal(requestedLearning.statusCode, 202, requestedLearning.body);
+    const learningId = requestedLearning.json<{ id: string }>().id;
+    await processLearningRun(db, config, learningId);
+    const learning = (await call('GET', '/api/learning?window=28')).json<{
+      evidence: { features: number };
+      insights: unknown[];
+      strategy: { version: number };
+    }>();
+    assert.equal(learning.evidence.features, 1);
+    assert.equal(learning.insights.length, 0);
+    assert.equal(learning.strategy.version, 1);
+    const outcomes = await db.performanceOutcome.findMany({
+      where: { feature: { userId: owner.user.id } },
+    });
+    assert.equal(outcomes.find((row) => row.horizon === '1H')?.available, false);
+    assert.equal(outcomes.find((row) => row.horizon === '6H')?.available, false);
+    assert.equal(outcomes.find((row) => row.horizon === '24H')?.available, true);
+    assert.equal(
+      (await call('GET', '/api/learning?window=28', undefined, otherCookie)).json<{
+        evidence: { features: number };
+      }>().evidence.features,
+      0,
+    );
+    const experiment = await call('POST', '/api/experiments', {
+      name: 'Hook structure test',
+      hypothesis: 'Curiosity hooks improve retained attention.',
+      dimension: 'hookType',
+      controlValue: 'DIRECT',
+      variantValue: 'CURIOSITY',
+      allocationRate: 0.25,
+      minimumSample: 8,
+    });
+    assert.equal(experiment.statusCode, 201, experiment.body);
+    const experimentId = experiment.json<{ id: string }>().id;
+    assert.equal(
+      (await call('PATCH', `/api/experiments/${experimentId}`, { action: 'ACTIVATE' })).statusCode,
+      200,
+    );
+    assert.equal(
+      (await call('PATCH', `/api/experiments/${experimentId}`, { action: 'PAUSE' })).statusCode,
+      200,
+    );
+    await db.youTubePublication.update({
+      where: { id },
+      data: { state: originalPublication.state, publishAt: originalPublication.publishAt },
+    });
+    pass(
+      'performance learning keeps unavailable horizons honest, refuses thin-data insights, versions a baseline strategy and scopes experiment controls',
     );
     await db.analyticsSyncRun.update({
       where: { id: syncId },

@@ -23,6 +23,12 @@ import {
   MediaError,
   type AnalysisSignal,
 } from '../../../packages/video-analysis/src/index.js';
+import {
+  defaultStrategy,
+  durationBucket,
+  predictPerformance,
+  strategySchema,
+} from '../../../packages/learning/src/index.js';
 
 function sha256(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
@@ -230,6 +236,11 @@ export async function rankCandidates(
       rankingCandidates.map((candidate) => candidate.id),
     );
     progress = 85;
+    const strategyRecord = await db.strategyConfig.findFirst({
+      where: { userId: job.source.userId, state: 'ACTIVE' },
+      orderBy: { version: 'desc' },
+    });
+    const strategy = strategyRecord ? strategySchema.parse(strategyRecord.config) : defaultStrategy;
     const rankedGameDetector = detectorForGame(
         result.output.gameIdentification.game,
         result.output.gameIdentification.confidence / 100,
@@ -288,6 +299,15 @@ export async function rankCandidates(
       });
       for (const ranking of result.output.rankings) {
         const candidate = rankingCandidates.find((item) => item.id === ranking.candidateId)!;
+        const prediction = predictPerformance(
+          ranking.highlightScore,
+          {
+            game: result.output.gameIdentification.game || detection.game,
+            eventType: ranking.eventType,
+            durationBucket: durationBucket(candidate.endTime - candidate.startTime),
+          },
+          strategy,
+        );
         await tx.highlightCandidate.update({
           where: { id: ranking.candidateId },
           data: {
@@ -329,6 +349,9 @@ export async function rankCandidates(
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
             estimatedCostUsd: result.estimatedCostUsd,
+            predictedPerformanceScore: prediction.score,
+            predictionConfidence: prediction.confidence,
+            strategyVersion: strategyRecord?.version,
           },
           update: {
             ...score,
@@ -340,6 +363,9 @@ export async function rankCandidates(
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
             estimatedCostUsd: result.estimatedCostUsd,
+            predictedPerformanceScore: prediction.score,
+            predictionConfidence: prediction.confidence,
+            strategyVersion: strategyRecord?.version,
           },
         });
       }

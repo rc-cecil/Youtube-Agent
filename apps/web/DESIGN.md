@@ -199,6 +199,6 @@ Metrics use tabular numerals and point-of-use provenance. Charts do not animate 
 
 - **Don't** add another dashboard shell or hero to Analytics, Revenue, or future routes.
 - **Don't** render retained Efferd references as product UI; they inform hierarchy only.
-- **Don't** fabricate metrics, fill missing dates with zero, or enable Phase 8 processing through previews.
+- **Don't** fabricate metrics, fill missing dates with zero, or present an association as a guaranteed outcome.
 - **Don't** animate routine polling or chart refreshes, or make animation necessary to understand an action.
 - **Don't** imitate glass, metal, bevels, or other physical materials with CSS effects.

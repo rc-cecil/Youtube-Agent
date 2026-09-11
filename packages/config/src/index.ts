@@ -49,6 +49,9 @@ const schema = z.object({
     .refine((v) => !v || /^[0-9a-fA-F]{64}$/.test(v), 'Use a 32-byte hex encryption key'),
   ANALYTICS_SYNC_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(1440).default(360),
   ANALYTICS_INITIAL_LOOKBACK_DAYS: z.coerce.number().int().min(7).max(3650).default(90),
+  LEARNING_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(10080).default(360),
+  LEARNING_MIN_SAMPLE_SIZE: z.coerce.number().int().min(3).max(100).default(5),
+  LEARNING_MAX_ADJUSTMENT: z.coerce.number().min(0.01).max(0.15).default(0.15),
   AI_EMBEDDING_MODEL: z
     .string()
     .optional()

@@ -68,6 +68,12 @@ model User {
   analyticsRuns AnalyticsSyncRun[]
   analyticsSnapshots AnalyticsSnapshot[]
   revenueSnapshots RevenueSnapshot[]
+  learningRuns LearningRun[]
+  performanceFeatures PerformanceFeature[]
+  performanceInsights PerformanceInsight[]
+  strategyConfigs StrategyConfig[]
+  experiments Experiment[]
+  experimentAssignments ExperimentAssignment[]
 }
 
 model YouTubeConnection {
@@ -124,6 +130,7 @@ model YouTubePublication {
   updatedAt DateTime @updatedAt
   analytics AnalyticsSnapshot[]
   revenues RevenueSnapshot[]
+  performanceFeature PerformanceFeature?
   @@index([state, nextAttemptAt])
 }
 
@@ -198,6 +205,161 @@ model RevenueSnapshot {
   collectedAt DateTime @default(now())
   @@index([userId, currency, scope, reportDate])
   @@index([videoId, reportDate])
+}
+
+model LearningRun {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  windowDays Int @default(90)
+  state JobState @default(PENDING)
+  attempt Int @default(0)
+  availableAt DateTime @default(now())
+  leaseUntil DateTime?
+  startedAt DateTime?
+  finishedAt DateTime?
+  errorMessage String?
+  createdAt DateTime @default(now())
+  insights PerformanceInsight[]
+  @@index([state, availableAt])
+  @@index([userId, createdAt])
+}
+
+model PerformanceFeature {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortId String @unique
+  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  publicationId String @unique
+  publication YouTubePublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  videoId String @unique
+  game String
+  eventType String
+  duration Float
+  durationBucket String
+  postingTime String
+  dayOfWeek String
+  hookType String
+  openingFrameStyle String
+  captionStyle String
+  captionUsage Boolean
+  editIntensity String
+  facecamPresence Boolean
+  titleLength Int
+  emojiUsage Boolean
+  hashtagSet String[]
+  sourceType String
+  concept String
+  editorialRole String
+  audioCharacteristics Json
+  extractedAt DateTime @default(now())
+  outcomes PerformanceOutcome[]
+  assignments ExperimentAssignment[]
+  @@index([userId, extractedAt])
+  @@index([userId, game, eventType])
+}
+
+model PerformanceOutcome {
+  id String @id @default(uuid())
+  featureId String
+  feature PerformanceFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  horizon String
+  reportThrough String?
+  available Boolean @default(false)
+  availabilityReason String?
+  ageHours Int
+  views BigInt?
+  engagedViews BigInt?
+  watchMinutes Decimal? @db.Decimal(20, 6)
+  averageViewDuration Decimal? @db.Decimal(20, 6)
+  averageViewPercentage Decimal? @db.Decimal(20, 6)
+  likes BigInt?
+  comments BigInt?
+  shares BigInt?
+  subscribersGained BigInt?
+  subscribersLost BigInt?
+  estimatedRevenueUsd Decimal? @db.Decimal(20, 6)
+  performanceScore Float?
+  normalized Json?
+  observedAt DateTime @default(now())
+  @@unique([featureId, horizon])
+  @@index([horizon, available, observedAt])
+}
+
+model PerformanceInsight {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId String
+  run LearningRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  window String
+  dimension String
+  segment String
+  finding String
+  evidence Json
+  sampleSize Int
+  confidence String
+  recommendedAction Json
+  state String @default("ACTIVE")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([runId, window, dimension, segment])
+  @@index([userId, state, createdAt])
+}
+
+model StrategyConfig {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version Int
+  state String @default("ACTIVE")
+  config Json
+  previousConfig Json?
+  reason String
+  metricsUsed Json
+  sourceInsightId String?
+  explorationRate Float @default(0.25)
+  createdAt DateTime @default(now())
+  @@unique([userId, version])
+  @@index([userId, state])
+}
+
+model Experiment {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name String
+  hypothesis String
+  dimension String
+  controlValue String
+  variantValue String
+  status String @default("DRAFT")
+  allocationRate Float @default(0.25)
+  minimumSample Int @default(8)
+  results Json?
+  confidence String @default("LOW")
+  createdAt DateTime @default(now())
+  startedAt DateTime?
+  endedAt DateTime?
+  assignments ExperimentAssignment[]
+  @@index([userId, status, createdAt])
+}
+
+model ExperimentAssignment {
+  id String @id @default(uuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  experimentId String
+  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  shortId String
+  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  featureId String?
+  feature PerformanceFeature? @relation(fields: [featureId], references: [id], onDelete: SetNull)
+  arm String
+  assignedAt DateTime @default(now())
+  @@unique([experimentId, shortId])
+  @@index([userId, assignedAt])
 }
 
 model Campaign {
@@ -386,6 +548,9 @@ model HighlightScore {
   inputTokens Int?
   outputTokens Int?
   estimatedCostUsd Decimal? @db.Decimal(12, 6)
+  predictedPerformanceScore Float?
+  predictionConfidence String?
+  strategyVersion Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   @@index([highlightScore])
@@ -485,6 +650,9 @@ model GeneratedShort {
   duration Float
   confidence Int
   qualityScore Int
+  predictedPerformanceScore Float?
+  predictionConfidence String?
+  strategyVersion Int?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   editPlans EditDecisionList[]
@@ -497,6 +665,8 @@ model GeneratedShort {
   reuseReason String?
   @@index([sourceId, createdAt])
   @@index([state, createdAt])
+  performanceFeature PerformanceFeature?
+  experimentAssignments ExperimentAssignment[]
 }
 model EditDecisionList {
   id String @id @default(uuid())

@@ -20,6 +20,7 @@ import { planShorts } from './plan-shorts.js';
 import { editorialTick } from './editorial.js';
 import { youtubeTick } from './youtube.js';
 import { analyticsTick } from './analytics.js';
+import { learningTick } from './learning.js';
 
 const config = getConfig(),
   storage = createStorage(config);
@@ -104,6 +105,18 @@ const analyticsInterval = setInterval(() => {
 void analyticsTick(db, config).catch(() =>
   logger.error('Initial YouTube analytics synchronization interrupted'),
 );
+let learningTask: Promise<void> | undefined;
+let learningBusy = false;
+const learningInterval = setInterval(() => {
+  if (learningBusy) return;
+  learningBusy = true;
+  learningTask = learningTick(db, config)
+    .catch(() => logger.error('Performance learning interrupted'))
+    .finally(() => {
+      learningBusy = false;
+    });
+}, 60000);
+void learningTick(db, config).catch(() => logger.error('Initial performance learning interrupted'));
 let closing = false;
 async function close() {
   if (closing) return;
@@ -112,8 +125,10 @@ async function close() {
   clearInterval(editorialInterval);
   clearInterval(youtubeInterval);
   clearInterval(analyticsInterval);
+  clearInterval(learningInterval);
   await youtubeTask;
   await analyticsTask;
+  await learningTask;
   await editorialTask;
   await worker.close();
   await queue.close();

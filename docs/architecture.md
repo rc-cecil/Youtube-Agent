@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–7 were implemented sequentially under explicit user authorization; later phases remain design-only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–8 were implemented sequentially under explicit user authorization; Phase 9 remains design-only.
 
 ## 1. Existing architecture assessment
 
@@ -40,7 +40,7 @@ Validate immutable EDL versions before the dedicated `short-rendering` queue. ED
 
 Google OAuth uses minimal scopes, state/PKCE, secure callbacks, encrypted refresh tokens, disconnect/revoke and reconnect flows. An explicit `YOUTUBE_MODE=mock|live` adapter arrives in Phase 6; Phase 1 makes no YouTube calls. Upload privately through resumable Data API uploads, persist session and returned ID before schedule verification, and reconcile ambiguous results rather than blindly duplicate uploads. Rights acknowledgment and QC/approval gate publication. Store UTC instants plus channel IANA timezone (Africa/Accra default). Central configuration defaults to 12:00 DISCOVERY, 16:00 ENGAGEMENT and 20:00 HERO. Reserve the best concept for HERO first, then diversity-plan the other roles. Unique slot constraints and leases prevent duplicate assignment. Maintain 3–7 days of buffer, backups, watchdogs, alerts and 30-day/90-slot campaign visibility; external uptime is never guaranteed.
 
-## 8. Analytics design (Phase 7 implemented; Phase 8 learning planned)
+## 8. Analytics and learning design (Phases 7–8 implemented)
 
 Ingest actual supported Analytics/Data API metrics into idempotent daily snapshots; refresh recent publications more frequently. Store availability and collection timestamps, never turn unauthorized revenue into zero. Label estimated money and derived RPM distinctly; conversions require sourced, timestamped rates. Separate view age, slot, game and channel baseline in comparisons. Insights expose finding, evidence, sample size, confidence and recommendation, with audited strategy versions. No fake analytics cards in the Phase 1 shell.
 
@@ -56,13 +56,13 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
 9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Phase 7 is implemented under explicit authorization. Stop before Phase 8.**
+**Phase 8 is implemented under explicit authorization. Stop before Phase 9.**
 
 Phase 5 extends this architecture as described in [the editorial implementation plan](phase-5-plan.md). `DailySlate`, `SlateSlot`, `EditorialSettings`, `ShortFingerprint`, and independent `EditorialRun` records support source-independent planning. The worker claims durable PostgreSQL requests with a renewable lease, fences attempts, and commits under owner/candidate locks. Existing BullMQ media/render queues are retained. The calendar expresses editorial reservations, never external publication state.
 
 Phase 6 adds encrypted `YouTubeConnection`, browser-bound `YouTubeOAuthState`, immutable-media `YouTubePublication`, and `Campaign` records. The API snapshots approved QC media and metadata under the owner lock. The worker advances one resumable or reconciliation step at a time, probes saved sessions after uncertainty, stores video IDs, and distinguishes uploaded, processing, scheduled, published, missed, cancelled, and needs-attention states. Live provider calls require explicit configuration; tests inject a closed mocked transport.
 
-Phase 7 adds durable `AnalyticsSyncRun` work and immutable `AnalyticsSnapshot`/`RevenueSnapshot` observations. The worker queries channel and batches of at most 500 known video IDs, keeps omitted days absent, refreshes recent windows periodically, and records availability separately from zero. The API aggregates only owner-filtered persisted snapshots for dashboard, analytics, per-Short, and revenue views. USD and GHS are requested directly from YouTube; no local exchange rate is implied. Phase 8 insight generation, recommendations, experiments, and strategy changes remain out of scope.
+Phase 7 adds durable `AnalyticsSyncRun` work and immutable `AnalyticsSnapshot`/`RevenueSnapshot` observations. Phase 8 adds replay-safe `LearningRun` work, reproducible `PerformanceFeature` and age-horizon `PerformanceOutcome` records, confidence-labeled `PerformanceInsight` evidence, reversible `StrategyConfig` versions, and bounded `Experiment` cohorts. Learning compares rolling 7/28/90/lifetime windows, requires configurable minimum samples, applies recency weighting and outlier control, and uses multi-signal performance scores. Exact 1h/6h outcomes stay explicitly unavailable while the provider source remains daily-grained. Strategy changes are audited and bounded to 15%; exploration remains configurable from 20–30%. Predictions affect ranking only and are never represented as certainty.
 
 ## 10. Known risks and decisions
 

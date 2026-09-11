@@ -1,0 +1,6 @@
+{
+  "name": "@youtube-agent/learning",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts"
+}

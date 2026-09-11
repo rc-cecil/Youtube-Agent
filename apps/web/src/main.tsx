@@ -38,6 +38,8 @@ import {
   CheckCircle2,
   ChartNoAxesCombined,
   WalletCards,
+  BrainCircuit,
+  FlaskConical,
 } from 'lucide-react';
 import type { EditDecisionList } from '../../../packages/remotion/src/edl.js';
 import type {
@@ -51,7 +53,7 @@ import type {
 import { api, post } from './api.js';
 import { DashboardHero } from '@/components/dashboard-hero';
 import { AnalyticsDashboard, ShortAnalyticsSummary } from '@/components/analytics-dashboard';
-import { FuturePreview } from '@/components/future-preview';
+import { LearningWorkspace } from '@/components/learning-workspace';
 import { EditorialCalendar, ReuseDeclaration } from '@/components/editorial-calendar';
 import { Button } from '@/components/ui/button';
 import { Badge as StatusBadge } from '@/components/ui/badge';
@@ -267,6 +269,7 @@ function Dashboard() {
       <ErrorBox message={error} />
       <DashboardHero />
       <AnalyticsDashboard mode="overview" />
+      <LearningWorkspace mode="overview" />
       <div className="stats">
         {[
           ['Source recordings', data?.total, FolderOpen],
@@ -361,7 +364,6 @@ function Dashboard() {
           </Link>
         </section>
       </div>
-      <FuturePreview />
     </>
   );
 }
@@ -386,6 +388,30 @@ function RevenuePage() {
         description="Provider-reported estimates in USD or GHS, with transparent local attribution."
       />
       <AnalyticsDashboard mode="revenue" />
+    </>
+  );
+}
+function InsightsPage() {
+  return (
+    <>
+      <PageTitle
+        eyebrow="AI INSIGHTS"
+        title="Learn what earns attention."
+        description="Audited comparisons from your own published Shorts, normalized into cautious recommendations."
+      />
+      <LearningWorkspace />
+    </>
+  );
+}
+function ExperimentsPage() {
+  return (
+    <>
+      <PageTitle
+        eyebrow="EXPERIMENTS"
+        title="Test one variable at a time."
+        description="Keep exploration deliberate, bounded, and measurable before changing the playbook."
+      />
+      <LearningWorkspace mode="experiments" />
     </>
   );
 }
@@ -1869,6 +1895,8 @@ function App() {
     ['/calendar', 'Editorial calendar', Clock3],
     ['/analytics', 'Analytics', ChartNoAxesCombined],
     ['/revenue', 'Revenue', WalletCards],
+    ['/ai-insights', 'AI insights', BrainCircuit],
+    ['/experiments', 'Experiments', FlaskConical],
     ['/queue', 'Job queue', Clock3],
     ['/health', 'System health', Activity],
     ['/settings', 'Settings', Settings],
@@ -1949,13 +1977,15 @@ function App() {
             <Route path="/calendar" element={<EditorialCalendar />} />
             <Route path="/analytics" element={<AnalyticsPage />} />
             <Route path="/revenue" element={<RevenuePage />} />
+            <Route path="/ai-insights" element={<InsightsPage />} />
+            <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/queue" element={<QueuePage />} />
             <Route path="/health" element={<HealthPage />} />
             <Route path="/settings" element={<SettingsPage user={user} />} />
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 7</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 8</span>
           </footer>
         </main>
       </div>

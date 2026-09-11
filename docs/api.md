@@ -1,4 +1,6 @@
-# Phase 7 REST contract
+# Phase 8 REST contract
+
+Phase 8 adds authenticated, owner-scoped `GET /api/learning?window=7|28|90|lifetime`, `POST /api/learning/run`, `POST /api/learning/insights/:id/apply`, and `PATCH /api/learning/strategy`. Experiment controls are `GET|POST /api/experiments` and `PATCH /api/experiments/:id` with `ACTIVATE`, `PAUSE`, `COMPLETE`, or `CANCEL`. Mutation responses are audited; active learning requests are reused rather than duplicated.
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 

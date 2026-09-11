@@ -15,6 +15,7 @@ import {
   validateEditDecisionList,
   type EditDecisionList,
 } from '../../../packages/remotion/src/public.js';
+import { deterministicArm } from '../../../packages/learning/src/index.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
@@ -101,7 +102,11 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
           gameDetection: true,
           candidates: {
             where: { score: { isNot: null } },
-            orderBy: [{ score: { highlightScore: 'desc' } }, { eventTime: 'asc' }],
+            orderBy: [
+              { score: { predictedPerformanceScore: { sort: 'desc', nulls: 'last' } } },
+              { score: { highlightScore: 'desc' } },
+              { eventTime: 'asc' },
+            ],
             include: { score: true, detectedEvent: true },
           },
         },
@@ -265,8 +270,23 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
             duration: edl.outputDuration,
             confidence: score.confidence,
             qualityScore,
+            predictedPerformanceScore: score.predictedPerformanceScore,
+            predictionConfidence: score.predictionConfidence,
+            strategyVersion: score.strategyVersion,
           },
         });
+        const experiments = await tx.experiment.findMany({
+          where: { userId: job.source.userId, status: 'ACTIVE' },
+        });
+        for (const experiment of experiments)
+          await tx.experimentAssignment.create({
+            data: {
+              userId: job.source.userId,
+              experimentId: experiment.id,
+              shortId: short.id,
+              arm: deterministicArm(`${experiment.id}:${short.id}`, experiment.allocationRate),
+            },
+          });
         const plan = await tx.editDecisionList.create({
           data: {
             shortId: short.id,
