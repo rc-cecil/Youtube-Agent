@@ -25,6 +25,7 @@ import { registerEditorial, invalidateSlates } from './editorial.js';
 import { registerYouTube } from './youtube.js';
 import { registerAnalytics } from './analytics.js';
 import { registerLearning } from './learning.js';
+import { hardeningChecks, readinessStatus } from '../../../packages/ops/src/index.js';
 
 export async function buildApp(
   db: PrismaClient,
@@ -40,6 +41,7 @@ export async function buildApp(
     },
     bodyLimit: 16 * 1024,
     requestTimeout: 120_000,
+    trustProxy: config.NODE_ENV === 'production',
   });
   await app.register(cookie);
   await app.register(helmet);
@@ -136,7 +138,7 @@ export async function buildApp(
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     chunkBytes: config.UPLOAD_CHUNK_BYTES,
     timezone: config.TIMEZONE,
-    phase: 8,
+    phase: 9,
     storage: config.STORAGE_PROVIDER,
     aiMode: config.AI_MODE,
     aiModel:
@@ -732,6 +734,83 @@ export async function buildApp(
       include: { source: { select: { filename: true } } },
     }),
   }));
+  app.get('/api/ops', { preHandler: requireAuth }, async (req) => {
+    const [alerts, jobSummary, oldestActiveJob, backupAudit] = await Promise.all([
+      db.opsAlert.findMany({
+        where: { userId: req.userId, state: 'ACTIVE' },
+        orderBy: [{ severity: 'asc' }, { lastSeenAt: 'desc' }],
+        take: 50,
+      }),
+      db.jobRun.groupBy({
+        by: ['state'],
+        where: { source: { userId: req.userId } },
+        _count: { _all: true },
+      }),
+      db.jobRun.findFirst({
+        where: {
+          source: { userId: req.userId },
+          state: { in: ['PENDING', 'RUNNING', 'RETRYING'] },
+        },
+        orderBy: { updatedAt: 'asc' },
+        select: { id: true, kind: true, state: true, updatedAt: true },
+      }),
+      db.auditLog.findFirst({
+        where: { userId: req.userId, action: 'BACKUP_VERIFIED' },
+        orderBy: { createdAt: 'desc' },
+      }),
+    ]);
+    const backupAgeHours = backupAudit
+      ? Math.floor((Date.now() - backupAudit.createdAt.getTime()) / 3600_000)
+      : null;
+    return {
+      alerts,
+      checks: hardeningChecks(config),
+      jobs: Object.fromEntries(jobSummary.map((row) => [row.state, row._count._all])),
+      oldestActiveJob,
+      backups: {
+        maxAgeHours: config.BACKUP_MAX_AGE_HOURS,
+        lastVerifiedAt: backupAudit?.createdAt ?? null,
+        ageHours: backupAgeHours,
+        status:
+          backupAgeHours === null
+            ? 'unverified'
+            : backupAgeHours <= config.BACKUP_MAX_AGE_HOURS
+              ? 'current'
+              : 'stale',
+      },
+    };
+  });
+  app.patch<{ Params: { id: string } }>(
+    '/api/ops/alerts/:id',
+    { preHandler: requireAuth },
+    async (req) => {
+      const input = z.object({ action: z.enum(['ACKNOWLEDGE', 'RESOLVE']) }).parse(req.body);
+      const data =
+        input.action === 'ACKNOWLEDGE'
+          ? { acknowledgedAt: new Date() }
+          : { state: 'RESOLVED', resolvedAt: new Date() };
+      const updated = await db.opsAlert.updateMany({
+        where: { id: req.params.id, userId: req.userId, state: 'ACTIVE' },
+        data,
+      });
+      if (!updated.count) throw new AppError(404, 'NOT_FOUND', 'Alert not found');
+      await db.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: `OPS_ALERT_${input.action}`,
+          resourceId: req.params.id,
+        },
+      });
+      return { ok: true };
+    },
+  );
+  app.post('/api/ops/backups/verified', { preHandler: requireAuth }, async (req) => {
+    const input = z.object({ note: z.string().trim().max(500).optional() }).parse(req.body ?? {});
+    await db.auditLog.create({
+      data: { userId: req.userId, action: 'BACKUP_VERIFIED', resourceId: input.note },
+    });
+    return { ok: true, verifiedAt: new Date() };
+  });
   app.get('/api/dashboard', { preHandler: requireAuth }, async (req) => {
     const where = { userId: req.userId };
     const [total, ready, failed, processing, aggregate, recent, aiUsage, aiCalls, shortsReady] =
@@ -783,10 +862,13 @@ export async function buildApp(
         return 'unavailable';
       }
     };
-    const [database, redisStatus, storageStatus] = await Promise.all([
+    const [database, redisStatus, storageStatus, activeCriticalAlerts] = await Promise.all([
       probe(() => db.$queryRaw`SELECT 1`),
       probe(() => redis.ping()),
       probe(() => storage.health()),
+      db.opsAlert.count({
+        where: { userId: _req.userId, state: 'ACTIVE', severity: 'CRITICAL' },
+      }),
     ]);
     const heartbeat =
       redisStatus === 'healthy' ? await redis.get(HEARTBEAT).catch(() => null) : null;
@@ -798,16 +880,18 @@ export async function buildApp(
       rendererHeartbeat && Date.now() - Date.parse(rendererHeartbeat) < 30_000
         ? 'healthy'
         : 'unavailable';
-    const healthy = [database, redisStatus, storageStatus, worker, renderer].every(
-      (v) => v === 'healthy',
+    const status = readinessStatus(
+      { database, redis: redisStatus, storage: storageStatus, worker, renderer },
+      activeCriticalAlerts,
     );
-    reply.code(healthy ? 200 : 503);
+    reply.code(status === 'healthy' ? 200 : 503);
     return {
-      status: healthy ? 'healthy' : 'degraded',
+      status,
       services: { database, redis: redisStatus, storage: storageStatus, worker, renderer },
       heartbeat,
       rendererHeartbeat,
-      phase: 8,
+      activeCriticalAlerts,
+      phase: 9,
     };
   });
   return app;

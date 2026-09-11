@@ -52,6 +52,12 @@ const schema = z.object({
   LEARNING_INTERVAL_MINUTES: z.coerce.number().int().min(15).max(10080).default(360),
   LEARNING_MIN_SAMPLE_SIZE: z.coerce.number().int().min(3).max(100).default(5),
   LEARNING_MAX_ADJUSTMENT: z.coerce.number().min(0.01).max(0.15).default(0.15),
+  WATCHDOG_STALE_JOB_MINUTES: z.coerce.number().int().min(5).max(1440).default(60),
+  BACKUP_MAX_AGE_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  ALERT_WEBHOOK_URL: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.string().url().optional(),
+  ),
   AI_EMBEDDING_MODEL: z
     .string()
     .optional()

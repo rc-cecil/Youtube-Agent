@@ -1,6 +1,6 @@
 # Architecture and implementation plan
 
-Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–8 were implemented sequentially under explicit user authorization; Phase 9 remains design-only.
+Source of truth: the user's 79-section master specification, supplied 2026-09-07. Phases 1–9 were implemented sequentially under explicit user authorization.
 
 ## 1. Existing architecture assessment
 
@@ -8,7 +8,7 @@ The repository `rc-cecil/Youtube-Agent`, at baseline `dd3ce60`, contains only a 
 
 ## 2. Directory structure
 
-Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`; Phase 3 added `ai` and `game-detectors`; Phase 4 added `apps/renderer` and `packages/remotion`; Phase 5 added `editorial`; Phase 6 added `youtube`; Phase 7 adds `analytics`. Phase 8 adds learning.
+Phase 1 created `apps/web`, `apps/api`, `apps/worker`, and the foundation packages. Phase 2 added `video-analysis`; Phase 3 added `ai` and `game-detectors`; Phase 4 added `apps/renderer` and `packages/remotion`; Phase 5 added `editorial`; Phase 6 added `youtube`; Phase 7 adds `analytics`. Phase 8 adds learning. Phase 9 adds operations hardening.
 
 ## 3. Database schema plan
 
@@ -54,15 +54,15 @@ Ingest actual supported Analytics/Data API metrics into idempotent daily snapsho
 6. YouTube: OAuth, mock/live adapters, resumable publishing, timezone/DST/boundary tests and reconciliation.
 7. Analytics: snapshot ingestion, measured dashboard and authorized estimated revenue.
 8. Learning: features, evidence/confidence, comparisons, bounded audited adaptations and experiments.
-9. Hardening: load/chaos tests, alerts, deployment, backups, recovery and additional security review. Security and retry basics begin in Phase 1; this milestone deepens them.
+9. Hardening: durable operations alerts, stale-job watchdogs, authenticated readiness reports, backup verification records, stricter container health/security settings, CI naming/gates, and additional security checks. Security and retry basics begin in Phase 1; this milestone deepens them.
 
-**Phase 8 is implemented under explicit authorization. Stop before Phase 9.**
+**Phase 9 is implemented under explicit authorization.**
 
 Phase 5 extends this architecture as described in [the editorial implementation plan](phase-5-plan.md). `DailySlate`, `SlateSlot`, `EditorialSettings`, `ShortFingerprint`, and independent `EditorialRun` records support source-independent planning. The worker claims durable PostgreSQL requests with a renewable lease, fences attempts, and commits under owner/candidate locks. Existing BullMQ media/render queues are retained. The calendar expresses editorial reservations, never external publication state.
 
 Phase 6 adds encrypted `YouTubeConnection`, browser-bound `YouTubeOAuthState`, immutable-media `YouTubePublication`, and `Campaign` records. The API snapshots approved QC media and metadata under the owner lock. The worker advances one resumable or reconciliation step at a time, probes saved sessions after uncertainty, stores video IDs, and distinguishes uploaded, processing, scheduled, published, missed, cancelled, and needs-attention states. Live provider calls require explicit configuration; tests inject a closed mocked transport.
 
-Phase 7 adds durable `AnalyticsSyncRun` work and immutable `AnalyticsSnapshot`/`RevenueSnapshot` observations. Phase 8 adds replay-safe `LearningRun` work, reproducible `PerformanceFeature` and age-horizon `PerformanceOutcome` records, confidence-labeled `PerformanceInsight` evidence, reversible `StrategyConfig` versions, and bounded `Experiment` cohorts. Learning compares rolling 7/28/90/lifetime windows, requires configurable minimum samples, applies recency weighting and outlier control, and uses multi-signal performance scores. Exact 1h/6h outcomes stay explicitly unavailable while the provider source remains daily-grained. Strategy changes are audited and bounded to 15%; exploration remains configurable from 20–30%. Predictions affect ranking only and are never represented as certainty.
+Phase 7 adds durable `AnalyticsSyncRun` work and immutable `AnalyticsSnapshot`/`RevenueSnapshot` observations. Phase 8 adds replay-safe `LearningRun` work, reproducible `PerformanceFeature` and age-horizon `PerformanceOutcome` records, confidence-labeled `PerformanceInsight` evidence, reversible `StrategyConfig` versions, and bounded `Experiment` cohorts. Phase 9 adds `OpsAlert` records for owner-scoped operational evidence, stale-job watchdog alerts, backup verification audit entries, and deployment guardrail checks. Learning compares rolling 7/28/90/lifetime windows, requires configurable minimum samples, applies recency weighting and outlier control, and uses multi-signal performance scores. Exact 1h/6h outcomes stay explicitly unavailable while the provider source remains daily-grained. Strategy changes are audited and bounded to 15%; exploration remains configurable from 20–30%. Predictions affect ranking only and are never represented as certainty.
 
 ## 10. Known risks and decisions
 

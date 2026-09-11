@@ -1,6 +1,6 @@
-# Phase 8 REST contract
+# Phase 9 REST contract
 
-Phase 8 adds authenticated, owner-scoped `GET /api/learning?window=7|28|90|lifetime`, `POST /api/learning/run`, `POST /api/learning/insights/:id/apply`, and `PATCH /api/learning/strategy`. Experiment controls are `GET|POST /api/experiments` and `PATCH /api/experiments/:id` with `ACTIVATE`, `PAUSE`, `COMPLETE`, or `CANCEL`. Mutation responses are audited; active learning requests are reused rather than duplicated.
+Phase 9 preserves the Phase 8 learning and experiment API, then adds authenticated operations reporting: `GET /api/ops`, `PATCH /api/ops/alerts/:id`, and `POST /api/ops/backups/verified`. Mutation responses are audited; active learning requests are reused rather than duplicated.
 
 All paths start with `/api`. JSON responses serialize byte counts as decimal strings to preserve PostgreSQL BigInt precision. Errors have `{ "code": "...", "message": "..." }` and an appropriate non-2xx status.
 
@@ -38,6 +38,9 @@ Authentication uses an HttpOnly `shorts_session` cookie. Its random value is has
 | `GET /dashboard`                | Actual source counts, bytes, duration and recent recordings        |
 | `GET /health/live`              | Public process liveness only                                       |
 | `GET /health`                   | Authenticated dependency readiness; 503 when degraded              |
+| `GET /ops`                      | Active alerts, deployment checks, job counts and backup status     |
+| `PATCH /ops/alerts/:id`         | Acknowledge or resolve an owner-scoped operations alert            |
+| `POST /ops/backups/verified`    | Audited marker that database and media backups were verified       |
 
 ## Editorial endpoints
 

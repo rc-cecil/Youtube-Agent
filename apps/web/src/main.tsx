@@ -128,6 +128,10 @@ const friendly: Record<string, string> = {
   QC: 'Quality check',
   APPROVED: 'Approved',
   REJECTED: 'Rejected',
+  CRITICAL: 'Critical',
+  WARNING: 'Warning',
+  INFO: 'Info',
+  acknowledged: 'Acknowledged',
 };
 function Badge({ state }: { state: string }) {
   return (
@@ -1547,8 +1551,36 @@ function HealthPage() {
       services: Record<string, string>;
       heartbeat: string | null;
       rendererHeartbeat: string | null;
+      activeCriticalAlerts: number;
     } | null>(null),
     [error, setError] = useState('');
+  const {
+    data: ops,
+    error: opsError,
+    refresh,
+  } = useData<{
+    alerts: {
+      id: string;
+      severity: string;
+      code: string;
+      title: string;
+      message: string;
+      resourceKind: string | null;
+      resourceId: string | null;
+      acknowledgedAt: string | null;
+      firstSeenAt: string;
+      lastSeenAt: string;
+    }[];
+    checks: { key: string; label: string; status: boolean; severity: string; message: string }[];
+    jobs: Record<string, number>;
+    oldestActiveJob: { id: string; kind: string; state: string; updatedAt: string } | null;
+    backups: {
+      maxAgeHours: number;
+      lastVerifiedAt: string | null;
+      ageHours: number | null;
+      status: string;
+    };
+  }>('/ops');
   useEffect(() => {
     let active = true;
     const load = async () => {
@@ -1578,9 +1610,9 @@ function HealthPage() {
       <PageTitle
         eyebrow="OPERATIONS"
         title="System health"
-        description="Live readiness of the services behind your workspace."
+        description="Live readiness, alerts, recovery signals, and deployment guardrails."
       />
-      <ErrorBox message={error} />
+      <ErrorBox message={error || opsError} />
       <div className="health-grid">
         {Object.entries(data?.services ?? {}).map(([name, state]) => (
           <section className="panel health-card" key={name}>
@@ -1601,12 +1633,115 @@ function HealthPage() {
           </section>
         ))}
       </div>
-      {data?.status === 'degraded' && (
+      {data?.status !== 'healthy' && (
         <div className="error">
           A service needs attention. Accepted uploads remain recorded in the database while the
           worker recovers.
         </div>
       )}
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Operations alerts</h2>
+          <span className="muted">{ops?.alerts.length ?? 0} active</span>
+        </div>
+        {ops?.alerts.length ? (
+          <div className="job-list">
+            {ops.alerts.map((alert) => (
+              <div className="job-card" key={alert.id}>
+                <div className="job-row">
+                  <div>
+                    <strong>{alert.title}</strong>
+                    <small>
+                      {alert.code} · last seen {new Date(alert.lastSeenAt).toLocaleString()}
+                    </small>
+                  </div>
+                  <Badge state={alert.acknowledgedAt ? 'acknowledged' : alert.severity} />
+                </div>
+                <p className="job-error">{alert.message}</p>
+                <div className="inline-actions">
+                  {!alert.acknowledgedAt && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() =>
+                        api(`/ops/alerts/${alert.id}`, {
+                          method: 'PATCH',
+                          body: JSON.stringify({ action: 'ACKNOWLEDGE' }),
+                        }).then(refresh)
+                      }
+                    >
+                      Acknowledge
+                      <Check size={15} />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() =>
+                      api(`/ops/alerts/${alert.id}`, {
+                        method: 'PATCH',
+                        body: JSON.stringify({ action: 'RESOLVE' }),
+                      }).then(refresh)
+                    }
+                  >
+                    Resolve
+                    <CheckCircle2 size={15} />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="muted pad">
+            {ops ? 'No active operations alerts.' : 'Loading operations alerts…'}
+          </p>
+        )}
+      </section>
+      <section className="panel">
+        <div className="panel-heading">
+          <h2>Deployment guardrails</h2>
+          <span className="muted">Phase 9 checks</span>
+        </div>
+        <div className="metadata">
+          {ops?.checks.map((check) => (
+            <div key={check.key}>
+              <small>{check.label}</small>
+              <strong>{check.status ? 'Ready' : check.severity}</strong>
+              <span>{check.status ? 'Configured' : check.message}</span>
+            </div>
+          ))}
+          <div>
+            <small>Backup verification</small>
+            <strong>{ops?.backups.status ?? 'Loading'}</strong>
+            <span>
+              {ops?.backups.lastVerifiedAt
+                ? `${ops.backups.ageHours}h old · target ${ops.backups.maxAgeHours}h`
+                : 'No backup verification recorded'}
+            </span>
+          </div>
+          <div>
+            <small>Oldest active job</small>
+            <strong>{ops?.oldestActiveJob?.kind ?? 'None'}</strong>
+            <span>
+              {ops?.oldestActiveJob
+                ? `${ops.oldestActiveJob.state} since ${new Date(
+                    ops.oldestActiveJob.updatedAt,
+                  ).toLocaleString()}`
+                : 'No pending processing work'}
+            </span>
+          </div>
+        </div>
+        <div className="inline-actions pad-top">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => post('/ops/backups/verified', {}).then(refresh)}
+          >
+            Mark backup verified
+            <Check size={15} />
+          </Button>
+        </div>
+      </section>
       <p className="muted">
         Last worker heartbeat:{' '}
         {data?.heartbeat ? new Date(data.heartbeat).toLocaleString() : 'Not available'}
@@ -1618,8 +1753,8 @@ function HealthPage() {
           : 'Not available'}
       </p>
       <p className="phase-note">
-        Media analysis, rendering, publication, and analytics run outside browser requests. Durable
-        database state remains the recovery source of truth.
+        Media analysis, rendering, publication, analytics, and learning run outside browser
+        requests. Durable database state remains the recovery source of truth.
       </p>
     </>
   );
@@ -1985,7 +2120,7 @@ function App() {
             <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
           <footer>
-            Your gameplay. Your originals.<span>Shorts Studio · Phase 8</span>
+            Your gameplay. Your originals.<span>Shorts Studio · Phase 9</span>
           </footer>
         </main>
       </div>

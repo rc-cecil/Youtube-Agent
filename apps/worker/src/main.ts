@@ -13,6 +13,12 @@ import {
   backfillShortPlanningJobs,
 } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
+import {
+  minutesAgo,
+  mirrorOpsAlert,
+  recordOpsAlert,
+  resolveOpsAlert,
+} from '../../../packages/ops/src/index.js';
 import { ingest } from './ingest.js';
 import { analyze } from './analyze.js';
 import { rankCandidates } from './rank.js';
@@ -56,12 +62,61 @@ async function tick() {
     await backfillRankingJobs(db);
     await backfillShortPlanningJobs(db);
     await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
+    await watchdogTick();
     if (cycles++ % 12 === 0) await cleanUploads(db, storage);
     await connection.set(HEARTBEAT, new Date().toISOString(), 'EX', 30);
   } catch (error) {
     logger.error({ message: String(error) }, 'Worker reconciliation failed');
   } finally {
     ticking = false;
+  }
+}
+async function watchdogTick() {
+  const cutoff = new Date(Date.now() - config.WATCHDOG_STALE_JOB_MINUTES * 60_000);
+  const staleJobs = await db.jobRun.findMany({
+    where: {
+      state: { in: ['RUNNING', 'RETRYING'] },
+      updatedAt: { lt: cutoff },
+      kind: { in: ['INGEST', 'ANALYZE', 'RANK', 'PLAN', 'RENDER'] },
+    },
+    include: { source: { select: { userId: true, filename: true } } },
+    take: 100,
+  });
+  const activeKeysByUser = new Map<string, Set<string>>();
+  for (const job of staleJobs) {
+    const dedupeKey = `stale-job:${job.id}`;
+    const keys = activeKeysByUser.get(job.source.userId) ?? new Set<string>();
+    keys.add(dedupeKey);
+    activeKeysByUser.set(job.source.userId, keys);
+    const existing = await db.opsAlert.findFirst({
+      where: { userId: job.source.userId, dedupeKey, state: 'ACTIVE' },
+      select: { id: true },
+    });
+    const alert = await recordOpsAlert(db, {
+      userId: job.source.userId,
+      severity: 'WARNING',
+      code: 'STALE_JOB',
+      title: `${job.kind.toLowerCase()} job has not reported progress`,
+      message: `${job.source.filename} has been ${job.state.toLowerCase()} for ${minutesAgo(
+        job.updatedAt,
+      )} minutes. Check worker/renderer logs before retrying.`,
+      resourceKind: 'JobRun',
+      resourceId: job.id,
+      dedupeKey,
+    });
+    if (!existing && config.ALERT_WEBHOOK_URL)
+      await mirrorOpsAlert(config.ALERT_WEBHOOK_URL, alert).catch((error) =>
+        logger.warn({ message: String(error) }, 'Operations alert webhook failed'),
+      );
+  }
+  const activeAlerts = await db.opsAlert.findMany({
+    where: { state: 'ACTIVE', code: 'STALE_JOB' },
+    select: { userId: true, dedupeKey: true },
+    take: 500,
+  });
+  for (const alert of activeAlerts) {
+    if (!activeKeysByUser.get(alert.userId)?.has(alert.dedupeKey))
+      await resolveOpsAlert(db, alert.userId, alert.dedupeKey);
   }
 }
 const interval = setInterval(() => {

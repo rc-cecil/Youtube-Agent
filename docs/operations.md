@@ -1,6 +1,14 @@
-# Phase 8 operations
+# Phase 9 operations
 
 Performance learning runs after fresh analytics on `LEARNING_INTERVAL_MINUTES`. Operators can request a run from AI Insights. `LEARNING_MIN_SAMPLE_SIZE` gates comparisons and `LEARNING_MAX_ADJUSTMENT` caps any single recommendation. Runs lease work for 15 minutes and retry at most three times. Exact 1h/6h observations remain unavailable with the current daily provider source; do not backfill them with estimates. Strategy history is append-only: supersede prior active versions rather than editing their evidence.
+
+## Phase 9 hardening
+
+The worker records `OpsAlert` rows when a processing, planning, ranking, or rendering job stays active without updates past `WATCHDOG_STALE_JOB_MINUTES`. Alerts are owner-scoped, de-duplicated, and auto-resolved when the stale condition clears. Operators can acknowledge or resolve active alerts from System Health.
+
+`GET /api/ops` exposes active alerts, deployment guardrail checks, job-state counts, oldest active work, and backup verification status. `POST /api/ops/backups/verified` writes an audit marker after an operator verifies PostgreSQL and media backups together. This marker is not a backup system; it is an operations evidence record.
+
+Production deployments should set an external `ALERT_WEBHOOK_URL` for out-of-app alert mirroring, keep backups newer than `BACKUP_MAX_AGE_HOURS`, and retain the existing PostgreSQL/media consistency requirement.
 
 ## Editorial planning
 
@@ -61,6 +69,12 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `OWNER_EMAIL`, `OWNER_PASSWORD`                        | One-time provisioning values                    |
 | `ANALYTICS_SYNC_INTERVAL_MINUTES`                      | Analytics refresh interval; default six hours   |
 | `ANALYTICS_INITIAL_LOOKBACK_DAYS`                      | First-sync history window; default 90 days      |
+| `LEARNING_INTERVAL_MINUTES`                            | Performance learning cadence; default six hours |
+| `LEARNING_MIN_SAMPLE_SIZE`                             | Minimum learning sample size; default five      |
+| `LEARNING_MAX_ADJUSTMENT`                              | Max learning adjustment; default 0.15           |
+| `WATCHDOG_STALE_JOB_MINUTES`                           | Stale active job alert threshold; default 60    |
+| `BACKUP_MAX_AGE_HOURS`                                 | Backup freshness target; default 24             |
+| `ALERT_WEBHOOK_URL`                                    | Optional external alert mirror endpoint         |
 
 `YOUTUBE_MODE=mock` disables all provider calls. For live mode, enable the YouTube Data API, configure a Web OAuth client, register the exact `APP_URL/api/youtube/callback` redirect, then set `YOUTUBE_MODE=live`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a stable `YOUTUBE_TOKEN_KEY` containing 32 random bytes as 64 hex characters. Losing that key makes saved tokens and resumable sessions unrecoverable. Never expose it to the browser or rotate it without a credential migration.
 
@@ -112,4 +126,4 @@ Keep provider, bucket, endpoint, and credentials on backend services. Grant buck
 
 Use TLS and same-origin routing. Production mode requires HTTPS and Secure cookies. Keep PostgreSQL/Redis private. The container runs media work as a non-root user with CPU/memory and no-new-privileges settings. FFmpeg receives argument arrays, file-only protocols, and a MOV/MP4/Matroska/WebM demuxer allowlist; no remote URLs are accepted.
 
-Finalization holds an upload row lock while streaming assembly in a bounded transaction. Slow object storage may justify a future finalization queue. Large-file load/chaos tests, stronger worker isolation, disk quotas, backup/restore exercises, and deployed alerts remain Phase 9 hardening tasks.
+Finalization holds an upload row lock while streaming assembly in a bounded transaction. Slow object storage may justify a future finalization queue. Phase 9 adds watchdog alerts, backup verification records, and stricter container settings; real production deployments still need environment-specific load/chaos exercises, disk quotas, backup/restore drills, TLS ingress, and an owned external alert destination.

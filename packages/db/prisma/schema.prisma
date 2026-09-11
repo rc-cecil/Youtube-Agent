@@ -1,10 +1,12 @@
 generator client {
   provider = "prisma-client-js"
 }
+
 datasource db {
   provider = "postgresql"
-  url = env("DATABASE_URL")
+  url      = env("DATABASE_URL")
 }
+
 enum SourceState {
   UPLOADED
   PROCESSING
@@ -13,6 +15,7 @@ enum SourceState {
   FAILED
   ARCHIVED
 }
+
 enum JobState {
   PENDING
   RUNNING
@@ -21,11 +24,13 @@ enum JobState {
   RETRYING
   CANCELLED
 }
+
 enum UploadState {
   OPEN
   COMPLETE
   EXPIRED
 }
+
 enum ShortState {
   DRAFT
   EDIT_PLANNED
@@ -35,11 +40,13 @@ enum ShortState {
   FAILED
   ARCHIVED
 }
+
 enum ReviewState {
   PENDING
   APPROVED
   REJECTED
 }
+
 enum RenderState {
   PENDING
   RENDERING
@@ -47,746 +54,826 @@ enum RenderState {
   READY
   FAILED
 }
+
 model User {
-  id String @id @default(uuid())
-  email String @unique
-  passwordHash String
-  createdAt DateTime @default(now())
-  sessions Session[]
-  sources SourceVideo[]
-  uploads UploadSession[]
-  auditLogs AuditLog[]
-  shorts GeneratedShort[]
-  shortSettings ShortCreationSettings?
-  editorialSettings EditorialSettings?
-  slates DailySlate[]
-  editorialRuns EditorialRun[]
-  youtube YouTubeConnection?
-  oauthStates YouTubeOAuthState[]
-  publications YouTubePublication[]
-  campaigns Campaign[]
-  analyticsRuns AnalyticsSyncRun[]
-  analyticsSnapshots AnalyticsSnapshot[]
-  revenueSnapshots RevenueSnapshot[]
-  learningRuns LearningRun[]
-  performanceFeatures PerformanceFeature[]
-  performanceInsights PerformanceInsight[]
-  strategyConfigs StrategyConfig[]
-  experiments Experiment[]
+  id                    String                 @id @default(uuid())
+  email                 String                 @unique
+  passwordHash          String
+  createdAt             DateTime               @default(now())
+  sessions              Session[]
+  sources               SourceVideo[]
+  uploads               UploadSession[]
+  auditLogs             AuditLog[]
+  shorts                GeneratedShort[]
+  shortSettings         ShortCreationSettings?
+  editorialSettings     EditorialSettings?
+  slates                DailySlate[]
+  editorialRuns         EditorialRun[]
+  youtube               YouTubeConnection?
+  oauthStates           YouTubeOAuthState[]
+  publications          YouTubePublication[]
+  campaigns             Campaign[]
+  analyticsRuns         AnalyticsSyncRun[]
+  analyticsSnapshots    AnalyticsSnapshot[]
+  revenueSnapshots      RevenueSnapshot[]
+  learningRuns          LearningRun[]
+  performanceFeatures   PerformanceFeature[]
+  performanceInsights   PerformanceInsight[]
+  strategyConfigs       StrategyConfig[]
+  experiments           Experiment[]
   experimentAssignments ExperimentAssignment[]
+  opsAlerts             OpsAlert[]
 }
 
 model YouTubeConnection {
-  id String @id @default(uuid())
-  userId String @unique
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  channelId String
-  title String
-  avatar String?
-  subscribers String?
-  accessToken String
-  refreshToken String
-  expiresAt DateTime
-  state String @default("CONNECTED")
-  scopes String[] @default([])
-  analyticsState String @default("PENDING")
-  revenueState String @default("PENDING")
+  id                String    @id @default(uuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId         String
+  title             String
+  avatar            String?
+  subscribers       String?
+  accessToken       String
+  refreshToken      String
+  expiresAt         DateTime
+  state             String    @default("CONNECTED")
+  scopes            String[]  @default([])
+  analyticsState    String    @default("PENDING")
+  revenueState      String    @default("PENDING")
   analyticsSyncedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 }
 
 model YouTubeOAuthState {
-  id String @id
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String   @id
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   browserHash String
-  verifier String
-  expiresAt DateTime
+  verifier    String
+  expiresAt   DateTime
 }
 
 model YouTubePublication {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  shortId String @unique
-  channelId String
-  renderKey String
-  renderHash String
-  bytes BigInt
-  metadata Json
-  publishAt DateTime
-  state String @default("PENDING")
-  sessionUrl String?
-  uploadedBytes BigInt @default(0)
-  videoId String? @unique
-  attempts Int @default(0)
-  nextAttemptAt DateTime @default(now())
-  errorMessage String?
-  lastVerifiedAt DateTime?
-  remoteStatus Json?
-  cancelRequested Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  analytics AnalyticsSnapshot[]
-  revenues RevenueSnapshot[]
+  id                 String              @id @default(uuid())
+  userId             String
+  user               User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortId            String              @unique
+  channelId          String
+  renderKey          String
+  renderHash         String
+  bytes              BigInt
+  metadata           Json
+  publishAt          DateTime
+  state              String              @default("PENDING")
+  sessionUrl         String?
+  uploadedBytes      BigInt              @default(0)
+  videoId            String?             @unique
+  attempts           Int                 @default(0)
+  nextAttemptAt      DateTime            @default(now())
+  errorMessage       String?
+  lastVerifiedAt     DateTime?
+  remoteStatus       Json?
+  cancelRequested    Boolean             @default(false)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  analytics          AnalyticsSnapshot[]
+  revenues           RevenueSnapshot[]
   performanceFeature PerformanceFeature?
+
   @@index([state, nextAttemptAt])
 }
 
 model AnalyticsSyncRun {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  channelId String
-  startDate String
-  endDate String
-  state JobState @default(PENDING)
-  attempt Int @default(0)
-  availableAt DateTime @default(now())
-  startedAt DateTime?
-  finishedAt DateTime?
+  id           String              @id @default(uuid())
+  userId       String
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channelId    String
+  startDate    String
+  endDate      String
+  state        JobState            @default(PENDING)
+  attempt      Int                 @default(0)
+  availableAt  DateTime            @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
   errorMessage String?
-  createdAt DateTime @default(now())
-  analytics AnalyticsSnapshot[]
-  revenues RevenueSnapshot[]
+  createdAt    DateTime            @default(now())
+  analytics    AnalyticsSnapshot[]
+  revenues     RevenueSnapshot[]
+
   @@index([state, availableAt])
   @@index([userId, createdAt])
 }
 
 model AnalyticsSnapshot {
-  id String @id @default(uuid())
-  reportKey String @unique
-  runId String
-  run AnalyticsSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  publicationId String?
-  publication YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
-  channelId String
-  videoId String?
-  scope String
-  reportDate String
-  views BigInt?
-  engagedViews BigInt?
-  estimatedMinutesWatched Decimal? @db.Decimal(20, 6)
-  averageViewDuration Decimal? @db.Decimal(20, 6)
-  averageViewPercentage Decimal? @db.Decimal(20, 6)
-  likes BigInt?
-  comments BigInt?
-  shares BigInt?
-  subscribersGained BigInt?
-  subscribersLost BigInt?
-  collectedAt DateTime @default(now())
+  id                      String              @id @default(uuid())
+  reportKey               String              @unique
+  runId                   String
+  run                     AnalyticsSyncRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId                  String
+  user                    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationId           String?
+  publication             YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  channelId               String
+  videoId                 String?
+  scope                   String
+  reportDate              String
+  views                   BigInt?
+  engagedViews            BigInt?
+  estimatedMinutesWatched Decimal?            @db.Decimal(20, 6)
+  averageViewDuration     Decimal?            @db.Decimal(20, 6)
+  averageViewPercentage   Decimal?            @db.Decimal(20, 6)
+  likes                   BigInt?
+  comments                BigInt?
+  shares                  BigInt?
+  subscribersGained       BigInt?
+  subscribersLost         BigInt?
+  collectedAt             DateTime            @default(now())
+
   @@index([userId, scope, reportDate])
   @@index([videoId, reportDate])
 }
 
 model RevenueSnapshot {
-  id String @id @default(uuid())
-  reportKey String @unique
-  runId String
-  run AnalyticsSyncRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  publicationId String?
-  publication YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
-  channelId String
-  videoId String?
-  scope String
-  reportDate String
-  currency String
-  estimatedRevenue Decimal? @db.Decimal(20, 6)
-  estimatedAdRevenue Decimal? @db.Decimal(20, 6)
-  estimatedPremiumRevenue Decimal? @db.Decimal(20, 6)
-  monetizedPlaybacks BigInt?
-  playbackBasedCpm Decimal? @db.Decimal(20, 6)
-  availability String @default("AVAILABLE")
-  collectedAt DateTime @default(now())
+  id                      String              @id @default(uuid())
+  reportKey               String              @unique
+  runId                   String
+  run                     AnalyticsSyncRun    @relation(fields: [runId], references: [id], onDelete: Cascade)
+  userId                  String
+  user                    User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicationId           String?
+  publication             YouTubePublication? @relation(fields: [publicationId], references: [id], onDelete: SetNull)
+  channelId               String
+  videoId                 String?
+  scope                   String
+  reportDate              String
+  currency                String
+  estimatedRevenue        Decimal?            @db.Decimal(20, 6)
+  estimatedAdRevenue      Decimal?            @db.Decimal(20, 6)
+  estimatedPremiumRevenue Decimal?            @db.Decimal(20, 6)
+  monetizedPlaybacks      BigInt?
+  playbackBasedCpm        Decimal?            @db.Decimal(20, 6)
+  availability            String              @default("AVAILABLE")
+  collectedAt             DateTime            @default(now())
+
   @@index([userId, currency, scope, reportDate])
   @@index([videoId, reportDate])
 }
 
 model LearningRun {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  windowDays Int @default(90)
-  state JobState @default(PENDING)
-  attempt Int @default(0)
-  availableAt DateTime @default(now())
-  leaseUntil DateTime?
-  startedAt DateTime?
-  finishedAt DateTime?
+  id           String               @id @default(uuid())
+  userId       String
+  user         User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  windowDays   Int                  @default(90)
+  state        JobState             @default(PENDING)
+  attempt      Int                  @default(0)
+  availableAt  DateTime             @default(now())
+  leaseUntil   DateTime?
+  startedAt    DateTime?
+  finishedAt   DateTime?
   errorMessage String?
-  createdAt DateTime @default(now())
-  insights PerformanceInsight[]
+  createdAt    DateTime             @default(now())
+  insights     PerformanceInsight[]
+
   @@index([state, availableAt])
   @@index([userId, createdAt])
 }
 
 model PerformanceFeature {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  shortId String @unique
-  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
-  publicationId String @unique
-  publication YouTubePublication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
-  videoId String @unique
-  game String
-  eventType String
-  duration Float
-  durationBucket String
-  postingTime String
-  dayOfWeek String
-  hookType String
-  openingFrameStyle String
-  captionStyle String
-  captionUsage Boolean
-  editIntensity String
-  facecamPresence Boolean
-  titleLength Int
-  emojiUsage Boolean
-  hashtagSet String[]
-  sourceType String
-  concept String
-  editorialRole String
+  id                   String                 @id @default(uuid())
+  userId               String
+  user                 User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortId              String                 @unique
+  short                GeneratedShort         @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  publicationId        String                 @unique
+  publication          YouTubePublication     @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+  videoId              String                 @unique
+  game                 String
+  eventType            String
+  duration             Float
+  durationBucket       String
+  postingTime          String
+  dayOfWeek            String
+  hookType             String
+  openingFrameStyle    String
+  captionStyle         String
+  captionUsage         Boolean
+  editIntensity        String
+  facecamPresence      Boolean
+  titleLength          Int
+  emojiUsage           Boolean
+  hashtagSet           String[]
+  sourceType           String
+  concept              String
+  editorialRole        String
   audioCharacteristics Json
-  extractedAt DateTime @default(now())
-  outcomes PerformanceOutcome[]
-  assignments ExperimentAssignment[]
+  extractedAt          DateTime               @default(now())
+  outcomes             PerformanceOutcome[]
+  assignments          ExperimentAssignment[]
+
   @@index([userId, extractedAt])
   @@index([userId, game, eventType])
 }
 
 model PerformanceOutcome {
-  id String @id @default(uuid())
-  featureId String
-  feature PerformanceFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
-  horizon String
-  reportThrough String?
-  available Boolean @default(false)
-  availabilityReason String?
-  ageHours Int
-  views BigInt?
-  engagedViews BigInt?
-  watchMinutes Decimal? @db.Decimal(20, 6)
-  averageViewDuration Decimal? @db.Decimal(20, 6)
-  averageViewPercentage Decimal? @db.Decimal(20, 6)
-  likes BigInt?
-  comments BigInt?
-  shares BigInt?
-  subscribersGained BigInt?
-  subscribersLost BigInt?
-  estimatedRevenueUsd Decimal? @db.Decimal(20, 6)
-  performanceScore Float?
-  normalized Json?
-  observedAt DateTime @default(now())
+  id                    String             @id @default(uuid())
+  featureId             String
+  feature               PerformanceFeature @relation(fields: [featureId], references: [id], onDelete: Cascade)
+  horizon               String
+  reportThrough         String?
+  available             Boolean            @default(false)
+  availabilityReason    String?
+  ageHours              Int
+  views                 BigInt?
+  engagedViews          BigInt?
+  watchMinutes          Decimal?           @db.Decimal(20, 6)
+  averageViewDuration   Decimal?           @db.Decimal(20, 6)
+  averageViewPercentage Decimal?           @db.Decimal(20, 6)
+  likes                 BigInt?
+  comments              BigInt?
+  shares                BigInt?
+  subscribersGained     BigInt?
+  subscribersLost       BigInt?
+  estimatedRevenueUsd   Decimal?           @db.Decimal(20, 6)
+  performanceScore      Float?
+  normalized            Json?
+  observedAt            DateTime           @default(now())
+
   @@unique([featureId, horizon])
   @@index([horizon, available, observedAt])
 }
 
 model PerformanceInsight {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  runId String
-  run LearningRun @relation(fields: [runId], references: [id], onDelete: Cascade)
-  window String
-  dimension String
-  segment String
-  finding String
-  evidence Json
-  sampleSize Int
-  confidence String
+  id                String      @id @default(uuid())
+  userId            String
+  user              User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  runId             String
+  run               LearningRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  window            String
+  dimension         String
+  segment           String
+  finding           String
+  evidence          Json
+  sampleSize        Int
+  confidence        String
   recommendedAction Json
-  state String @default("ACTIVE")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  state             String      @default("ACTIVE")
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+
   @@unique([runId, window, dimension, segment])
   @@index([userId, state, createdAt])
 }
 
 model StrategyConfig {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  version Int
-  state String @default("ACTIVE")
-  config Json
-  previousConfig Json?
-  reason String
-  metricsUsed Json
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  version         Int
+  state           String   @default("ACTIVE")
+  config          Json
+  previousConfig  Json?
+  reason          String
+  metricsUsed     Json
   sourceInsightId String?
-  explorationRate Float @default(0.25)
-  createdAt DateTime @default(now())
+  explorationRate Float    @default(0.25)
+  createdAt       DateTime @default(now())
+
   @@unique([userId, version])
   @@index([userId, state])
 }
 
 model Experiment {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  name String
-  hypothesis String
-  dimension String
-  controlValue String
-  variantValue String
-  status String @default("DRAFT")
-  allocationRate Float @default(0.25)
-  minimumSample Int @default(8)
-  results Json?
-  confidence String @default("LOW")
-  createdAt DateTime @default(now())
-  startedAt DateTime?
-  endedAt DateTime?
-  assignments ExperimentAssignment[]
+  id             String                 @id @default(uuid())
+  userId         String
+  user           User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name           String
+  hypothesis     String
+  dimension      String
+  controlValue   String
+  variantValue   String
+  status         String                 @default("DRAFT")
+  allocationRate Float                  @default(0.25)
+  minimumSample  Int                    @default(8)
+  results        Json?
+  confidence     String                 @default("LOW")
+  createdAt      DateTime               @default(now())
+  startedAt      DateTime?
+  endedAt        DateTime?
+  assignments    ExperimentAssignment[]
+
   @@index([userId, status, createdAt])
 }
 
 model ExperimentAssignment {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String              @id @default(uuid())
+  userId       String
+  user         User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   experimentId String
-  experiment Experiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
-  shortId String
-  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
-  featureId String?
-  feature PerformanceFeature? @relation(fields: [featureId], references: [id], onDelete: SetNull)
-  arm String
-  assignedAt DateTime @default(now())
+  experiment   Experiment          @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  shortId      String
+  short        GeneratedShort      @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  featureId    String?
+  feature      PerformanceFeature? @relation(fields: [featureId], references: [id], onDelete: SetNull)
+  arm          String
+  assignedAt   DateTime            @default(now())
+
   @@unique([experimentId, shortId])
   @@index([userId, assignedAt])
 }
 
 model Campaign {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   startDate String
-  endDate String
-  timezone String
+  endDate   String
+  timezone  String
   createdAt DateTime @default(now())
+
   @@unique([userId, startDate])
 }
+
 model Session {
-  id String @id @default(uuid())
-  tokenHash String @unique
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String   @id @default(uuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   expiresAt DateTime
   createdAt DateTime @default(now())
+
   @@index([expiresAt])
 }
+
 model UploadSession {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id])
-  filename String
-  mimeType String
-  bytes BigInt
-  chunkBytes Int
-  state UploadState @default(OPEN)
+  id                   String       @id @default(uuid())
+  userId               String
+  user                 User         @relation(fields: [userId], references: [id])
+  filename             String
+  mimeType             String
+  bytes                BigInt
+  chunkBytes           Int
+  state                UploadState  @default(OPEN)
   rightsAcknowledgedAt DateTime
-  expiresAt DateTime
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  parts UploadPart[]
-  source SourceVideo?
+  expiresAt            DateTime
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+  parts                UploadPart[]
+  source               SourceVideo?
+
   @@index([userId, state])
   @@index([state, expiresAt])
 }
+
 model UploadPart {
-  id String @id @default(uuid())
-  uploadId String
-  upload UploadSession @relation(fields: [uploadId], references: [id], onDelete: Cascade)
-  index Int
-  bytes Int
-  sha256 String
+  id         String        @id @default(uuid())
+  uploadId   String
+  upload     UploadSession @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  index      Int
+  bytes      Int
+  sha256     String
   storageKey String
+
   @@unique([uploadId, index])
 }
+
 model SourceVideo {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id])
-  uploadId String @unique
-  upload UploadSession @relation(fields: [uploadId], references: [id])
-  filename String
-  mimeType String
-  bytes BigInt
-  sha256 String
-  status SourceState @default(UPLOADED)
+  id                   String               @id @default(uuid())
+  userId               String
+  user                 User                 @relation(fields: [userId], references: [id])
+  uploadId             String               @unique
+  upload               UploadSession        @relation(fields: [uploadId], references: [id])
+  filename             String
+  mimeType             String
+  bytes                BigInt
+  sha256               String
+  status               SourceState          @default(UPLOADED)
   rightsAcknowledgedAt DateTime
-  duration Float?
-  width Int?
-  height Int?
-  videoCodec String?
-  audioCodec String?
-  hasAudio Boolean?
-  container String?
-  frameRate Float?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  assets VideoAsset[]
-  jobs JobRun[]
-  analysis VideoAnalysis?
-  gameDetection GameDetection?
-  candidates HighlightCandidate[]
-  detectedEvents DetectedEvent[]
-  aiCache AiResultCache[]
-  shorts GeneratedShort[]
+  duration             Float?
+  width                Int?
+  height               Int?
+  videoCodec           String?
+  audioCodec           String?
+  hasAudio             Boolean?
+  container            String?
+  frameRate            Float?
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  assets               VideoAsset[]
+  jobs                 JobRun[]
+  analysis             VideoAnalysis?
+  gameDetection        GameDetection?
+  candidates           HighlightCandidate[]
+  detectedEvents       DetectedEvent[]
+  aiCache              AiResultCache[]
+  shorts               GeneratedShort[]
+
   @@index([userId, createdAt])
   @@index([userId, sha256])
 }
+
 model VideoAnalysis {
-  id String @id @default(uuid())
-  sourceId String @unique
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  version Int @default(1)
-  status String @default("RUNNING")
-  sampleRate Float
-  sceneCount Int @default(0)
-  motionPeakCount Int @default(0)
-  audioPeakCount Int @default(0)
-  silenceSegmentCount Int @default(0)
-  summary Json
-  startedAt DateTime @default(now())
-  completedAt DateTime?
-  updatedAt DateTime @updatedAt
-  signals AnalysisSignal[]
-  candidates HighlightCandidate[]
+  id                  String               @id @default(uuid())
+  sourceId            String               @unique
+  source              SourceVideo          @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  version             Int                  @default(1)
+  status              String               @default("RUNNING")
+  sampleRate          Float
+  sceneCount          Int                  @default(0)
+  motionPeakCount     Int                  @default(0)
+  audioPeakCount      Int                  @default(0)
+  silenceSegmentCount Int                  @default(0)
+  summary             Json
+  startedAt           DateTime             @default(now())
+  completedAt         DateTime?
+  updatedAt           DateTime             @updatedAt
+  signals             AnalysisSignal[]
+  candidates          HighlightCandidate[]
 }
+
 model AnalysisSignal {
-  id String @id @default(uuid())
+  id         String        @id @default(uuid())
   analysisId String
-  analysis VideoAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  kind String
-  timestamp Float
-  value Float
-  duration Float?
-  evidence Json?
+  analysis   VideoAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  kind       String
+  timestamp  Float
+  value      Float
+  duration   Float?
+  evidence   Json?
+
   @@index([analysisId, kind, timestamp])
 }
+
 model GameDetection {
-  id String @id @default(uuid())
-  sourceId String @unique
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  game String
-  edition String?
-  confidence Float
+  id              String      @id @default(uuid())
+  sourceId        String      @unique
+  source          SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  game            String
+  edition         String?
+  confidence      Float
   detectorProfile String
-  method String
-  evidence Json
-  overridden Boolean @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  method          String
+  evidence        Json
+  overridden      Boolean     @default(false)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
 }
+
 model HighlightCandidate {
-  id String @id @default(uuid())
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  analysisId String
-  analysis VideoAnalysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
-  startTime Float
-  eventTime Float
-  endTime Float
-  eventType String
-  signalScore Int
-  reason String
-  signals Json
-  createdAt DateTime @default(now())
-  score HighlightScore?
-  detectedEvent DetectedEvent?
-  concepts ShortConcept[]
+  id             String          @id @default(uuid())
+  sourceId       String
+  source         SourceVideo     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  analysisId     String
+  analysis       VideoAnalysis   @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+  startTime      Float
+  eventTime      Float
+  endTime        Float
+  eventType      String
+  signalScore    Int
+  reason         String
+  signals        Json
+  createdAt      DateTime        @default(now())
+  score          HighlightScore?
+  detectedEvent  DetectedEvent?
+  concepts       ShortConcept[]
   generatedShort GeneratedShort?
+
   @@index([sourceId, signalScore])
   @@index([analysisId, eventTime])
 }
+
 model DetectedEvent {
-  id String @id @default(uuid())
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  candidateId String @unique
-  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  eventType String
-  confidence Int
+  id              String             @id @default(uuid())
+  sourceId        String
+  source          SourceVideo        @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  candidateId     String             @unique
+  candidate       HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  eventType       String
+  confidence      Int
   detectorProfile String
-  evidence Json
-  createdAt DateTime @default(now())
+  evidence        Json
+  createdAt       DateTime           @default(now())
+
   @@index([sourceId, eventType])
 }
+
 model HighlightScore {
-  id String @id @default(uuid())
-  candidateId String @unique
-  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  eventImportance Int
-  excitement Int
-  surprise Int
-  skill Int
-  humor Int
-  tension Int
-  emotionalReaction Int
-  visualClarity Int
-  contextIndependence Int
-  hookPotential Int
-  retentionPotential Int
-  sharePotential Int
-  novelty Int
-  editability Int
-  confidence Int
-  highlightScore Int
-  reason String
-  provider String
-  model String
-  promptVersion String
-  inputHash String
-  cached Boolean @default(false)
-  inputTokens Int?
-  outputTokens Int?
-  estimatedCostUsd Decimal? @db.Decimal(12, 6)
+  id                        String             @id @default(uuid())
+  candidateId               String             @unique
+  candidate                 HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  eventImportance           Int
+  excitement                Int
+  surprise                  Int
+  skill                     Int
+  humor                     Int
+  tension                   Int
+  emotionalReaction         Int
+  visualClarity             Int
+  contextIndependence       Int
+  hookPotential             Int
+  retentionPotential        Int
+  sharePotential            Int
+  novelty                   Int
+  editability               Int
+  confidence                Int
+  highlightScore            Int
+  reason                    String
+  provider                  String
+  model                     String
+  promptVersion             String
+  inputHash                 String
+  cached                    Boolean            @default(false)
+  inputTokens               Int?
+  outputTokens              Int?
+  estimatedCostUsd          Decimal?           @db.Decimal(12, 6)
   predictedPerformanceScore Float?
-  predictionConfidence String?
-  strategyVersion Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  predictionConfidence      String?
+  strategyVersion           Int?
+  createdAt                 DateTime           @default(now())
+  updatedAt                 DateTime           @updatedAt
+
   @@index([highlightScore])
 }
+
 model AiResultCache {
-  id String @id @default(uuid())
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  inputHash String
-  provider String
-  model String
-  promptVersion String
-  output Json
-  inputTokens Int?
-  outputTokens Int?
-  estimatedCostUsd Decimal? @db.Decimal(12, 6)
-  createdAt DateTime @default(now())
+  id               String      @id @default(uuid())
+  sourceId         String
+  source           SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  inputHash        String
+  provider         String
+  model            String
+  promptVersion    String
+  output           Json
+  inputTokens      Int?
+  outputTokens     Int?
+  estimatedCostUsd Decimal?    @db.Decimal(12, 6)
+  createdAt        DateTime    @default(now())
+
   @@unique([inputHash, provider, model, promptVersion])
   @@index([sourceId, createdAt])
 }
+
 model VideoAsset {
-  id String @id @default(uuid())
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  kind String
-  storageKey String @unique
-  bytes BigInt
-  createdAt DateTime @default(now())
+  id         String      @id @default(uuid())
+  sourceId   String
+  source     SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  kind       String
+  storageKey String      @unique
+  bytes      BigInt
+  createdAt  DateTime    @default(now())
+
   @@unique([sourceId, kind])
 }
+
 model JobRun {
-  id String @id @default(uuid())
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  kind String @default("INGEST")
-  state JobState @default(PENDING)
-  progress Int @default(0)
-  attempt Int @default(0)
-  errorCode String?
+  id           String          @id @default(uuid())
+  sourceId     String
+  source       SourceVideo     @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  kind         String          @default("INGEST")
+  state        JobState        @default(PENDING)
+  progress     Int             @default(0)
+  attempt      Int             @default(0)
+  errorCode    String?
   errorMessage String?
-  startedAt DateTime?
-  finishedAt DateTime?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  failures FailureEvent[]
-  render RenderArtifact?
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  failures     FailureEvent[]
+  render       RenderArtifact?
+
   @@index([state, createdAt])
   @@index([sourceId, createdAt])
 }
+
 model ShortCreationSettings {
-  id String @id @default(uuid())
-  userId String @unique
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  autopilotEnabled Boolean @default(false)
-  minimumHighlightScore Int @default(55)
-  minimumConfidence Int @default(50)
-  minimumQualityScore Int @default(55)
-  preferredHashtags String[] @default([])
-  bannedHashtags String[] @default([])
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  autopilotEnabled      Boolean  @default(false)
+  minimumHighlightScore Int      @default(55)
+  minimumConfidence     Int      @default(50)
+  minimumQualityScore   Int      @default(55)
+  preferredHashtags     String[] @default([])
+  bannedHashtags        String[] @default([])
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
 }
+
 model ShortConcept {
-  id String @id @default(uuid())
-  candidateId String
-  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  key String
-  concept String
-  hook String
-  rationale String
-  selected Boolean @default(false)
-  createdAt DateTime @default(now())
+  id             String             @id @default(uuid())
+  candidateId    String
+  candidate      HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  key            String
+  concept        String
+  hook           String
+  rationale      String
+  selected       Boolean            @default(false)
+  createdAt      DateTime           @default(now())
   generatedShort GeneratedShort?
+
   @@unique([candidateId, key])
   @@index([candidateId, selected])
 }
+
 model GeneratedShort {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sourceId String
-  source SourceVideo @relation(fields: [sourceId], references: [id], onDelete: Cascade)
-  candidateId String @unique
-  candidate HighlightCandidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  selectedConceptId String @unique
-  selectedConcept ShortConcept @relation(fields: [selectedConceptId], references: [id])
-  state ShortState @default(DRAFT)
-  reviewState ReviewState @default(PENDING)
-  title String
-  titleCandidates Json
-  description String
-  hashtags String[]
-  game String
-  eventType String
-  editorialRole String?
-  sourceTimestamp Float
-  duration Float
-  confidence Int
-  qualityScore Int
+  id                        String                 @id @default(uuid())
+  userId                    String
+  user                      User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceId                  String
+  source                    SourceVideo            @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  candidateId               String                 @unique
+  candidate                 HighlightCandidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  selectedConceptId         String                 @unique
+  selectedConcept           ShortConcept           @relation(fields: [selectedConceptId], references: [id])
+  state                     ShortState             @default(DRAFT)
+  reviewState               ReviewState            @default(PENDING)
+  title                     String
+  titleCandidates           Json
+  description               String
+  hashtags                  String[]
+  game                      String
+  eventType                 String
+  editorialRole             String?
+  sourceTimestamp           Float
+  duration                  Float
+  confidence                Int
+  qualityScore              Int
   predictedPerformanceScore Float?
-  predictionConfidence String?
-  strategyVersion Int?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  editPlans EditDecisionList[]
-  renders RenderArtifact[]
+  predictionConfidence      String?
+  strategyVersion           Int?
+  createdAt                 DateTime               @default(now())
+  updatedAt                 DateTime               @updatedAt
+  editPlans                 EditDecisionList[]
+  renders                   RenderArtifact[]
+  fingerprint               ShortFingerprint?
+  slateSlot                 SlateSlot?
+  reuseKind                 String?
+  reuseOfId                 String?
+  reuseReason               String?
+  performanceFeature        PerformanceFeature?
+  experimentAssignments     ExperimentAssignment[]
+
   @@index([userId, createdAt])
-  fingerprint ShortFingerprint?
-  slateSlot SlateSlot?
-  reuseKind String?
-  reuseOfId String?
-  reuseReason String?
   @@index([sourceId, createdAt])
   @@index([state, createdAt])
-  performanceFeature PerformanceFeature?
-  experimentAssignments ExperimentAssignment[]
 }
+
 model EditDecisionList {
-  id String @id @default(uuid())
-  shortId String
-  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
-  version Int
-  schemaVersion Int @default(1)
-  document Json
-  validatedAt DateTime
-  createdAt DateTime @default(now())
-  renders RenderArtifact[]
+  id            String           @id @default(uuid())
+  shortId       String
+  short         GeneratedShort   @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  version       Int
+  schemaVersion Int              @default(1)
+  document      Json
+  validatedAt   DateTime
+  createdAt     DateTime         @default(now())
+  renders       RenderArtifact[]
+
   @@unique([shortId, version])
 }
+
 model RenderArtifact {
-  id String @id @default(uuid())
-  shortId String
-  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  id                 String           @id @default(uuid())
+  shortId            String
+  short              GeneratedShort   @relation(fields: [shortId], references: [id], onDelete: Cascade)
   editDecisionListId String
-  editDecisionList EditDecisionList @relation(fields: [editDecisionListId], references: [id])
-  jobId String @unique
-  job JobRun @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  state RenderState @default(PENDING)
-  storageKey String? @unique
-  bytes BigInt?
-  sha256 String?
-  duration Float?
-  width Int?
-  height Int?
-  videoCodec String?
-  audioCodec String?
-  hasAudio Boolean?
-  qc Json?
-  errorCode String?
-  errorMessage String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  editDecisionList   EditDecisionList @relation(fields: [editDecisionListId], references: [id])
+  jobId              String           @unique
+  job                JobRun           @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  state              RenderState      @default(PENDING)
+  storageKey         String?          @unique
+  bytes              BigInt?
+  sha256             String?
+  duration           Float?
+  width              Int?
+  height             Int?
+  videoCodec         String?
+  audioCodec         String?
+  hasAudio           Boolean?
+  qc                 Json?
+  errorCode          String?
+  errorMessage       String?
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+
   @@index([shortId, createdAt])
   @@index([state, createdAt])
 }
+
 model FailureEvent {
-  id String @id @default(uuid())
-  jobId String
-  job JobRun @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  errorCode String
+  id           String   @id @default(uuid())
+  jobId        String
+  job          JobRun   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  errorCode    String
   errorMessage String
-  attempt Int
-  createdAt DateTime @default(now())
+  attempt      Int
+  createdAt    DateTime @default(now())
 }
+
 model AuditLog {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id])
-  action String
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
   resourceId String?
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
   @@index([userId, createdAt])
 }
 
-model EditorialSettings {
-  userId String @id
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  timezone String @default("Africa/Accra")
-  postingTimes String[] @default(["12:00", "16:00", "20:00"])
-  similarityThreshold Float @default(0.78)
-  maxSourcePerDay Int @default(2)
-  sourceCooldownMinutes Int @default(10)
-  bufferDays Int @default(3)
-  automaticPlanning Boolean @default(false)
-  updatedAt DateTime @updatedAt
+model OpsAlert {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  severity       String
+  code           String
+  title          String
+  message        String
+  resourceKind   String?
+  resourceId     String?
+  dedupeKey      String
+  state          String    @default("ACTIVE")
+  firstSeenAt    DateTime  @default(now())
+  lastSeenAt     DateTime  @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt     DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@unique([userId, dedupeKey, state])
+  @@index([userId, state, severity, lastSeenAt])
 }
+
+model EditorialSettings {
+  userId                String   @id
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  timezone              String   @default("Africa/Accra")
+  postingTimes          String[] @default(["12:00", "16:00", "20:00"])
+  similarityThreshold   Float    @default(0.78)
+  maxSourcePerDay       Int      @default(2)
+  sourceCooldownMinutes Int      @default(10)
+  bufferDays            Int      @default(3)
+  automaticPlanning     Boolean  @default(false)
+  updatedAt             DateTime @updatedAt
+}
+
 model DailySlate {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  localDate String
-  timezone String
-  revision Int @default(1)
-  settings Json
+  id          String      @id @default(uuid())
+  userId      String
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  localDate   String
+  timezone    String
+  revision    Int         @default(1)
+  settings    Json
   diagnostics Json
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  slots SlateSlot[]
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+  slots       SlateSlot[]
+
   @@unique([userId, localDate])
 }
+
 model SlateSlot {
-  id String @id @default(uuid())
-  slateId String
-  slate DailySlate @relation(fields: [slateId], references: [id], onDelete: Cascade)
-  role String
+  id        String          @id @default(uuid())
+  slateId   String
+  slate     DailySlate      @relation(fields: [slateId], references: [id], onDelete: Cascade)
+  role      String
   localTime String
   plannedAt DateTime
-  shortId String? @unique
-  short GeneratedShort? @relation(fields: [shortId], references: [id], onDelete: SetNull)
-  score Float?
-  reason String
+  shortId   String?         @unique
+  short     GeneratedShort? @relation(fields: [shortId], references: [id], onDelete: SetNull)
+  score     Float?
+  reason    String
+
   @@unique([slateId, role])
   @@index([plannedAt])
 }
+
 model ShortFingerprint {
-  shortId String @id
-  short GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
-  sourceHash String
-  frameHashes String[]
-  embedding Float[] @default([])
+  shortId        String         @id
+  short          GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  sourceHash     String
+  frameHashes    String[]
+  embedding      Float[]        @default([])
   embeddingModel String?
-  textHash String?
-  version Int @default(1)
-  createdAt DateTime @default(now())
+  textHash       String?
+  version        Int            @default(1)
+  createdAt      DateTime       @default(now())
 }
+
 model EditorialRun {
-  id String @id @default(uuid())
-  userId String
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  localDate String
-  state JobState @default(PENDING)
-  attempt Int @default(0)
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  localDate    String
+  state        JobState  @default(PENDING)
+  attempt      Int       @default(0)
   errorMessage String?
-  availableAt DateTime @default(now())
-  leaseUntil DateTime?
-  createdAt DateTime @default(now())
-  finishedAt DateTime?
+  availableAt  DateTime  @default(now())
+  leaseUntil   DateTime?
+  createdAt    DateTime  @default(now())
+  finishedAt   DateTime?
+
   @@index([state, availableAt])
 }
