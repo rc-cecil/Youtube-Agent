@@ -101,6 +101,7 @@ model YouTubeConnection {
   analyticsState    String    @default("PENDING")
   revenueState      String    @default("PENDING")
   analyticsSyncedAt DateTime?
+  publishingPaused  Boolean   @default(false)
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 }

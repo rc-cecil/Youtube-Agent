@@ -171,7 +171,7 @@ export async function processAnalyticsRun(
   transport: typeof fetch = fetch,
 ) {
   const claimed = await db.analyticsSyncRun.updateMany({
-    where: { id, state: { in: ['PENDING', 'RETRYING'] }, availableAt: { lte: new Date() } },
+    where: { id, state: { in: ['PENDING', 'RETRYING'] } },
     data: {
       state: 'RUNNING',
       attempt: { increment: 1 },

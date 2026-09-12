@@ -29,6 +29,8 @@ export function unseal(value: string, key: string, owner: string) {
 export const configured = (c: Config) =>
   c.YOUTUBE_MODE === 'live' &&
   Boolean(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET && c.YOUTUBE_TOKEN_KEY);
+export const canAdvancePublication = (publishingPaused: boolean, cancelRequested: boolean) =>
+  !publishingPaused || cancelRequested;
 export const redirectUri = (c: Config) => new URL('/api/youtube/callback', c.APP_URL).href;
 export function authorizationUrl(c: Config, state: string, verifier: string) {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');

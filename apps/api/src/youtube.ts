@@ -48,6 +48,11 @@ export function registerYouTube(
         analyticsSyncedAt: true,
       },
     });
+    const pauseRows = connection
+      ? await db.$queryRaw<Array<{ publishingPaused: boolean }>>`
+          SELECT "publishingPaused" FROM "YouTubeConnection" WHERE "userId" = ${req.userId}
+        `
+      : [];
     const publications = await db.youTubePublication.findMany({
       where: { userId: req.userId },
       orderBy: { publishAt: 'asc' },
@@ -82,7 +87,15 @@ export function registerYouTube(
       where: { userId: req.userId },
       orderBy: { startDate: 'desc' },
     });
-    return { configured: configured(c), connection, publications, slots, campaigns };
+    return {
+      configured: configured(c),
+      connection: connection
+        ? { ...connection, publishingPaused: pauseRows[0]?.publishingPaused ?? false }
+        : null,
+      publications,
+      slots,
+      campaigns,
+    };
   });
   app.post('/api/youtube/connect', { preHandler }, async (req, reply) => {
     requireSetup();
@@ -248,6 +261,28 @@ export function registerYouTube(
         'Disconnected. Existing remote schedules remain on YouTube. Reconnect to manage them.',
     };
   });
+  app.patch('/api/youtube/publishing', { preHandler }, async (req) => {
+    const input = z.object({ paused: z.boolean() }).parse(req.body);
+    return db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
+      const connection = await tx.youTubeConnection.findUnique({ where: { userId: req.userId } });
+      if (!connection)
+        throw new AppError(409, 'CONNECT_CHANNEL', 'Connect your YouTube channel first.');
+      await tx.$executeRaw`
+        UPDATE "YouTubeConnection"
+        SET "publishingPaused" = ${input.paused}, "updatedAt" = now()
+        WHERE "userId" = ${req.userId}
+      `;
+      await tx.auditLog.create({
+        data: {
+          userId: req.userId,
+          action: input.paused ? 'YOUTUBE_PUBLISHING_PAUSED' : 'YOUTUBE_PUBLISHING_RESUMED',
+          resourceId: connection.channelId,
+        },
+      });
+      return { ok: true, publishingPaused: input.paused };
+    });
+  });
   app.post('/api/youtube/publications', { preHandler }, async (req, reply) => {
     requireSetup();
     const input = z
@@ -263,6 +298,15 @@ export function registerYouTube(
       const connection = await tx.youTubeConnection.findUnique({ where: { userId: req.userId } });
       if (connection?.state !== 'CONNECTED')
         throw new AppError(409, 'CONNECT_CHANNEL', 'Connect your YouTube channel first.');
+      const pauseRows = await tx.$queryRaw<Array<{ publishingPaused: boolean }>>`
+        SELECT "publishingPaused" FROM "YouTubeConnection" WHERE "userId" = ${req.userId}
+      `;
+      if (pauseRows[0]?.publishingPaused)
+        throw new AppError(
+          409,
+          'PUBLISHING_PAUSED',
+          'Publishing is paused. Resume publishing before scheduling new YouTube uploads.',
+        );
       const slot = await tx.slateSlot.findFirst({
         where: { id: input.slotId, slate: { userId: req.userId } },
         include: {

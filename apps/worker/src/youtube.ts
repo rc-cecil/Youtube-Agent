@@ -7,6 +7,7 @@ import type { Storage } from '../../../packages/storage/src/index.js';
 import { accessToken } from '../../../packages/youtube/src/credentials.js';
 import {
   beginUpload,
+  canAdvancePublication,
   configured,
   getVideo,
   metadataSchema,
@@ -40,6 +41,13 @@ export async function processPublication(
             !p.cancelRequested)
         )
           return;
+        if (!p.cancelRequested) {
+          const pauseRows = await tx.$queryRaw<Array<{ publishingPaused: boolean }>>`
+            SELECT "publishingPaused" FROM "YouTubeConnection" WHERE "userId" = ${p.userId}
+          `;
+          if (!canAdvancePublication(Boolean(pauseRows[0]?.publishingPaused), p.cancelRequested))
+            return;
+        }
         const token = await accessToken(tx, c, p.userId, p.channelId, transport);
         const metadata = metadataSchema.parse(p.metadata);
         const save = (data: Prisma.YouTubePublicationUpdateInput) =>

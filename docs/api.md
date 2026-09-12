@@ -72,13 +72,14 @@ Snapshot values can be `null` when a metric is not returned. Missing days are om
 | `GET /youtube`                          | Sanitized channel, future reserved slots, publications, and campaigns                |
 | `POST /youtube/connect`                 | Creates browser-bound PKCE state and returns Google's authorization URL              |
 | `GET /youtube/callback`                 | Consumes state once, exchanges code, reads channel, encrypts credentials, redirects  |
+| `PATCH /youtube/publishing`             | Pause or resume owner-scoped YouTube publication work                                |
 | `POST /youtube/disconnect`              | Revokes access, removes credentials; existing remote schedules remain                |
 | `POST /youtube/publications`            | Explicit QC/rights/review preflight and idempotent private upload request for a slot |
 | `POST /youtube/publications/:id/retry`  | Reconcile or resume a nonterminal publication                                        |
 | `POST /youtube/publications/:id/cancel` | Request remote schedule removal and verification                                     |
 | `POST /youtube/campaigns`               | Create a 30-day campaign and missing editorial planning requests                     |
 
-Provider URLs, access/refresh tokens, encrypted upload sessions, raw remote errors, and credentials are never returned. Active publication media and metadata are locked until cancellation is remotely verified. A 202 response means durable local acceptance, not successful upload or publication.
+Provider URLs, access/refresh tokens, encrypted upload sessions, raw remote errors, and credentials are never returned. Pausing publishing blocks new upload requests and stops non-cancellation worker publication steps; it does not delete already-created YouTube schedules. Active publication media and metadata are locked until cancellation is remotely verified. A 202 response means durable local acceptance, not successful upload or publication.
 
 1. Initiate with the actual filename, matching supported MIME, total bytes, and rights acknowledgment. IDs and paths are server-generated.
 2. Divide the original into `chunkBytes` parts. The final part may be smaller. A retransmission with the same hash succeeds; changed bytes at the same index produce `PART_CONFLICT`.

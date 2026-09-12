@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Check, ExternalLink, Link2, UploadCloud } from 'lucide-react';
+import { Check, ExternalLink, Link2, PauseCircle, PlayCircle, UploadCloud } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -39,6 +39,7 @@ type Overview = {
     avatar: string | null;
     subscribers: string | null;
     state: string;
+    publishingPaused: boolean;
   } | null;
   publications: Publication[];
   slots: Slot[];
@@ -177,6 +178,43 @@ export function YouTubePanel({ date, timezone }: { date: string; timezone: strin
           </Button>
           {connection && (
             <Button
+              variant={connection.publishingPaused ? 'secondary' : 'outline'}
+              disabled={Boolean(busy)}
+              aria-busy={busy === 'publishing-pause'}
+              onClick={() =>
+                void (async () => {
+                  setBusy('publishing-pause');
+                  setError('');
+                  setMessage('');
+                  try {
+                    await api('/youtube/publishing', {
+                      method: 'PATCH',
+                      body: JSON.stringify({ paused: !connection.publishingPaused }),
+                    });
+                    setData(await api<Overview>('/youtube'));
+                    setMessage(
+                      connection.publishingPaused
+                        ? 'Publishing resumed. Pending work can continue.'
+                        : 'Publishing paused. Existing remote schedules remain on YouTube.',
+                    );
+                  } catch (e) {
+                    setError((e as Error).message);
+                  } finally {
+                    setBusy(null);
+                  }
+                })()
+              }
+            >
+              {connection.publishingPaused ? (
+                <PlayCircle data-icon="inline-start" />
+              ) : (
+                <PauseCircle data-icon="inline-start" />
+              )}
+              {connection.publishingPaused ? 'Resume publishing' : 'Pause publishing'}
+            </Button>
+          )}
+          {connection && (
+            <Button
               variant="outline"
               disabled={Boolean(busy)}
               aria-busy={busy === 'disconnect'}
@@ -199,6 +237,14 @@ export function YouTubePanel({ date, timezone }: { date: string; timezone: strin
         Disconnecting does not cancel existing YouTube schedules. Cancel and verify them first, or
         manage them in YouTube Studio.
       </p>
+      {connection?.publishingPaused && (
+        <Alert>
+          <AlertDescription>
+            Publishing is paused. New uploads and pending publication work will not advance until
+            you resume. Existing remote YouTube schedules are not deleted automatically.
+          </AlertDescription>
+        </Alert>
+      )}
       <EditorialDisclosure title={`Publish reserved Shorts · ${date || 'select a day'}`}>
         {!selected.length && !publications.length && (
           <p>No reserved Shorts for this date. Plan a future day above, then approve its Shorts.</p>
@@ -212,7 +258,12 @@ export function YouTubePanel({ date, timezone }: { date: string; timezone: strin
             <ScheduleForm
               key={slot.id}
               slot={slot}
-              disabled={Boolean(busy) || !data.configured || connection?.state !== 'CONNECTED'}
+              disabled={
+                Boolean(busy) ||
+                !data.configured ||
+                connection?.state !== 'CONNECTED' ||
+                connection.publishingPaused
+              }
               pending={busy === `schedule:${slot.id}`}
               schedule={(body) => act('/youtube/publications', body, `schedule:${slot.id}`)}
             />

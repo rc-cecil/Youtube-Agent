@@ -20,6 +20,7 @@ A creator workspace for turning uploaded gameplay into measured YouTube Shorts. 
 - Durable editorial requests with leased execution, three bounded attempts, restart recovery, settings snapshots, owner locks, and unique Short reservations. Optional rolling editorial plans cover 3–7 days.
 - Google OAuth with PKCE, browser-bound single-use state, encrypted tokens, channel identity, refresh/reconnect/revoke handling, and live mode disabled by default.
 - Explicit private resumable YouTube uploads, audience/synthetic-media declarations, UTC scheduling, saved remote video IDs, reconciliation, cancellation verification, retry controls, and 30-day/90-slot campaigns.
+- Owner-scoped emergency publishing pause that blocks new/continuing YouTube publication work while still allowing cancellation reconciliation.
 - Recurring YouTube Analytics ingestion with immutable daily channel/video snapshots, manual sync, 7/28/90-day and captured-lifetime views, top-Short reporting, and per-Short analytics.
 - Estimated YouTube revenue in provider-returned USD or GHS for today, 7 days, 28 days, month, and captured lifetime, with video/game/event/duration/slot/role attribution and clearly labeled locally derived revenue per 1,000 views.
 - Evidence-backed learning with feature extraction, mature outcome windows, cautious recommendations, strategy versions, predictions, and experiments.

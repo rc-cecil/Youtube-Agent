@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   authorizationUrl,
   beginUpload,
+  canAdvancePublication,
   configured,
   digest,
   exchange,
@@ -63,6 +64,11 @@ describe('YouTube security and provider contracts', () => {
     expect(configured(config)).toBe(true);
     expect(configured({ ...config, YOUTUBE_MODE: 'mock' })).toBe(false);
     expect(configured({ ...config, YOUTUBE_TOKEN_KEY: '' })).toBe(false);
+  });
+  it('allows emergency pause to stop publication work while preserving cancellation', () => {
+    expect(canAdvancePublication(false, false)).toBe(true);
+    expect(canAdvancePublication(true, false)).toBe(false);
+    expect(canAdvancePublication(true, true)).toBe(true);
   });
   it('uses state, PKCE and offline consent without exposing the client secret', () => {
     const auth = new URL(authorizationUrl(config, 'state', 'verifier'));
