@@ -4,7 +4,7 @@ Scope: Short concept generation, structured edit decisions, Remotion composition
 
 ## Implemented
 
-- A durable `PLAN` stage creates three genuinely different concepts for each configured finalist and selects one using ranked evidence. Mock mode is deterministic; OpenAI mode uses the Responses API with `store:false`, an owner pseudonym, prompt-cache key, and strict JSON-schema output.
+- A durable `PLAN` stage dynamically accepts every distinct candidate that clears adaptive evidence gates, up to a safety ceiling. It creates three genuinely different concepts for each accepted moment and selects one using ranked evidence. Mock mode is deterministic; OpenAI mode uses the Responses API with `store:false`, an owner pseudonym, prompt-cache key, and strict JSON-schema output.
 - Planning generates short accurate titles, descriptions, preferred/banned hashtag handling, a first-second hook, a conservative crop strategy, and a content-driven duration. Measured interior silence can become jump cuts; exact source endings are trimmed to the final decodable frame.
 - Versioned EDLs validate source/output bounds, the 60-second limit, cuts and speed, crop/tracking data, captions, zooms, freezes, replay, overlays, audio instructions, metadata, and safe first-second hook timing before render work is committed.
 - `GameplayShort` is shared by Remotion Studio, the React Player preview, worker rendering, and the smoke test. It renders at 1080×1920 and supports CENTER, SMART_CROP, TRACKED_CROP, STACKED, BACKGROUND_BLUR, and GAMEPLAY_PLUS_FACE_CAM layouts plus declarative cuts, selective captions, zoom, freeze, replay, impact/progress overlays, audio ducking, and reduced copy-safe zones.
@@ -39,6 +39,6 @@ The render integration first caught a genuine black terminal-frame condition at 
 
 ## Boundary
 
-Transcript generation is not fabricated: the EDL and renderer support selective supplied captions, but planning leaves captions empty when no real transcript exists. `autopilotEnabled` is stored for the later publishing workflow but has no publishing side effect in Phase 4; manual approval is the only active review mode. Editorial-role assignment, DailySlatePlanner, diversity/similarity enforcement, YouTube OAuth/upload/scheduling, analytics, and learning remain later phases.
+Transcript generation is not fabricated: in OpenAI mode, audio-bearing candidate clips are transcribed with word timestamps and only speech close to the selected event becomes synchronized subtitle phrases. Silent or mock-mode clips receive conservative context captions rather than invented dialogue. `autopilotEnabled` is stored for the later publishing workflow but has no publishing side effect in Phase 4; manual approval is the only active review mode. Editorial-role assignment, DailySlatePlanner, diversity/similarity enforcement, YouTube OAuth/upload/scheduling, analytics, and learning remain later phases.
 
 Live OpenAI planning cannot be executed without deployment credentials/model access; automated tests exercise the exact request/strict-response contract with a deterministic transport and never spend credits. Production operators must review current Remotion licensing for their organization and configure sufficient renderer CPU, memory, browser, and scratch storage.

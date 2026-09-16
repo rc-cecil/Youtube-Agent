@@ -37,7 +37,7 @@ const schema = z.object({
     .default(4 * 3600_000),
   WORKER_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
   ANALYSIS_FPS: z.coerce.number().min(0.25).max(4).default(1),
-  ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(12),
+  ANALYSIS_CANDIDATE_LIMIT: z.coerce.number().int().min(1).max(50).default(24),
   PROXY_MAX_WIDTH: z.coerce.number().int().min(320).max(1920).default(720),
   AI_MODE: z.enum(['mock', 'openai']).default('mock'),
   GOOGLE_CLIENT_ID: z.string().default(''),
@@ -70,13 +70,15 @@ const schema = z.object({
     .string()
     .optional()
     .transform((value) => value || undefined),
+  AI_TRANSCRIPTION_MODEL: z.string().default('whisper-1'),
   OPENAI_API_KEY: z
     .string()
     .optional()
     .transform((value) => value || undefined),
   AI_TIMEOUT_MS: z.coerce.number().int().min(10_000).max(600_000).default(120_000),
-  AI_FINALIST_LIMIT: z.coerce.number().int().min(1).max(12).default(6),
-  SHORTS_PER_SOURCE_LIMIT: z.coerce.number().int().min(1).max(12).default(3),
+  AI_FINALIST_LIMIT: z.coerce.number().int().min(1).max(50).default(24),
+  // Safety ceiling only. Actual yield is decided from ranked evidence per source.
+  SHORTS_PER_SOURCE_LIMIT: z.coerce.number().int().min(1).max(50).default(24),
   RENDER_CONCURRENCY: z.coerce.number().int().min(1).max(4).default(1),
   RENDER_TIMEOUT_MS: z.coerce
     .number()
@@ -111,10 +113,12 @@ export function parseConfig(env: NodeJS.ProcessEnv): Config {
     throw new Error('Production APP_URL must use HTTPS');
   if (config.STORAGE_PROVIDER === 's3' && !config.STORAGE_BUCKET)
     throw new Error('STORAGE_BUCKET is required for s3');
-  if (config.AI_MODE === 'openai' && (!config.OPENAI_API_KEY || !config.AI_VISION_MODEL))
-    throw new Error('OPENAI_API_KEY and AI_VISION_MODEL are required when AI_MODE=openai');
-  if (config.NODE_ENV === 'production' && config.AI_MODE !== 'openai')
-    throw new Error('Production AI_MODE must be openai; mock ranking is development-only');
+  if (
+    config.NODE_ENV === 'production' &&
+    (config.AI_MODE !== 'openai' || !config.OPENAI_API_KEY || !config.AI_VISION_MODEL)
+  )
+    throw new Error('Production AI_MODE=openai requires OPENAI_API_KEY and AI_VISION_MODEL');
   return { ...config, STORAGE_ROOT: resolve(config.STORAGE_ROOT) };
 }
 export const getConfig = () => parseConfig(process.env);
+export * from './media-policy.js';

@@ -14,8 +14,8 @@ export async function ingest(db: PrismaClient, storage: Storage, config: Config,
   if (job.kind !== 'INGEST') throw new Error(`Expected INGEST job, received ${job.kind}`);
   if (['SUCCEEDED', 'CANCELLED', 'FAILED'].includes(job.state)) return;
   const running = await db.$transaction(async (tx) => {
-    const row = await tx.jobRun.update({
-      where: { id },
+    const claimed = await tx.jobRun.updateMany({
+      where: { id, state: { in: ['PENDING', 'RETRYING'] } },
       data: {
         state: 'RUNNING',
         attempt: { increment: 1 },
@@ -25,9 +25,12 @@ export async function ingest(db: PrismaClient, storage: Storage, config: Config,
         errorMessage: null,
       },
     });
+    if (!claimed.count) return null;
     await tx.sourceVideo.update({ where: { id: job.sourceId }, data: { status: 'PROCESSING' } });
-    return row;
+    return tx.jobRun.findUniqueOrThrow({ where: { id } });
   });
+  // BullMQ is at-least-once. A concurrent delivery that loses this atomic claim is a no-op.
+  if (!running) return;
   let materialized: Awaited<ReturnType<Storage['materialize']>> | undefined;
   let progress = 1;
   const timer = setInterval(() => {

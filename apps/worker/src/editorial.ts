@@ -57,7 +57,7 @@ export function editorialCandidate(short: Short): Candidate {
     game: short.game,
     eventType: short.eventType,
     title: short.title,
-    hook: edl.hook.text,
+    hook: edl.hook?.text ?? '',
     concept: short.selectedConcept.concept,
     duration: short.duration,
     template: `${edl.cropStrategy}:${edl.replay ? 'REPLAY' : edl.zooms.length ? 'ZOOM' : 'CLEAN'}`,
@@ -160,7 +160,14 @@ export async function processEditorialRun(
   const run = await db.editorialRun.findUniqueOrThrow({ where: { id } });
   try {
     const pool = await db.generatedShort.findMany({
-      where: { userId: run.userId, state: 'READY', reviewState: { not: 'REJECTED' } },
+      where: {
+        userId: run.userId,
+        state: 'READY',
+        publishable: true,
+        analysisMethod: 'AI',
+        reviewState: { not: 'REJECTED' },
+        renders: { some: { state: 'READY', renderPreset: 'HIGH' } },
+      },
       include,
       orderBy: [{ qualityScore: 'desc' }, { id: 'asc' }],
     });

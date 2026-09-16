@@ -41,22 +41,36 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
       },
     });
     await tx.sourceVideo.update({ where: { id: job.sourceId }, data: { status: 'ANALYZING' } });
-    await tx.videoAnalysis.upsert({
+    const latest = await tx.videoAnalysis.findFirst({
       where: { sourceId: job.sourceId },
-      create: {
-        sourceId: job.sourceId,
-        status: 'RUNNING',
-        sampleRate: config.ANALYSIS_FPS,
-        summary: {},
-      },
-      update: {
-        status: 'RUNNING',
-        sampleRate: config.ANALYSIS_FPS,
-        startedAt: new Date(),
-        completedAt: null,
-      },
+      orderBy: { version: 'desc' },
     });
-    return row;
+    const analysis =
+      latest && ['RUNNING', 'RETRYING'].includes(latest.status)
+        ? await tx.videoAnalysis.update({
+            where: { id: latest.id },
+            data: {
+              status: 'RUNNING',
+              sampleRate: config.ANALYSIS_FPS,
+              startedAt: new Date(),
+              completedAt: null,
+            },
+          })
+        : await tx.videoAnalysis.create({
+            data: {
+              sourceId: job.sourceId,
+              version: (latest?.version ?? 0) + 1,
+              status: 'RUNNING',
+              sampleRate: config.ANALYSIS_FPS,
+              summary: {},
+              policySnapshot: {
+                clustering: 'game-aware-v2',
+                duration: 'content-duration-v2',
+                sampling: 'adaptive-sampling-v1',
+              },
+            },
+          });
+    return { row, analysisId: analysis.id };
   });
   let materialized: Awaited<ReturnType<Storage['materialize']>> | undefined;
   const work = await mkdtemp(resolve(tmpdir(), 'shorts-analysis-'));
@@ -118,7 +132,7 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
       };
     await db.$transaction(async (tx) => {
       const analysis = await tx.videoAnalysis.update({
-        where: { sourceId: job.sourceId },
+        where: { id: running.analysisId },
         data: {
           status: 'SUCCEEDED',
           sampleRate: config.ANALYSIS_FPS,
@@ -152,6 +166,17 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
             signalScore: candidate.signalScore,
             reason: candidate.reason,
             signals: candidate.signals as unknown as Prisma.InputJsonValue,
+            eventStart: candidate.eventStart,
+            payoffEnd: candidate.payoffEnd,
+            durationClass: candidate.durationClass,
+            durationReason: candidate.durationReason,
+            clusteringPolicy: candidate.clusteringPolicy,
+            evidenceSummary: {
+              eventStart: candidate.eventStart,
+              keyMoment: candidate.eventTime,
+              payoffEnd: candidate.payoffEnd,
+              signalKinds: [...new Set(candidate.signals.map((signal) => signal.kind))],
+            },
           })),
         });
       if (!job.source.gameDetection?.overridden)
@@ -206,7 +231,7 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
           ? error.message
           : 'Analysis failed. Check storage and worker health, then retry.',
       terminal =
-        (error instanceof MediaError && error.permanent) || running.attempt >= MAX_ATTEMPTS;
+        (error instanceof MediaError && error.permanent) || running.row.attempt >= MAX_ATTEMPTS;
     await db.$transaction(async (tx) => {
       const changed = await tx.jobRun.updateMany({
         where: { id, state: { not: 'SUCCEEDED' } },
@@ -223,14 +248,14 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
         data: { status: terminal ? 'FAILED' : 'ANALYZING' },
       });
       await tx.videoAnalysis.updateMany({
-        where: { sourceId: job.sourceId },
+        where: { id: running.analysisId },
         data: { status: terminal ? 'FAILED' : 'RETRYING' },
       });
       await tx.failureEvent.create({
-        data: { jobId: id, errorCode: code, errorMessage: message, attempt: running.attempt },
+        data: { jobId: id, errorCode: code, errorMessage: message, attempt: running.row.attempt },
       });
     });
-    logger.warn({ jobId: id, code, attempt: running.attempt }, message);
+    logger.warn({ jobId: id, code, attempt: running.row.attempt }, message);
     if (terminal) throw new UnrecoverableError(message);
     throw error;
   } finally {

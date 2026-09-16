@@ -64,7 +64,7 @@ export async function backfillShortPlanningJobs(db: PrismaClient) {
 }
 export async function backfillAnalysisJobs(db: PrismaClient) {
   const sources = await db.sourceVideo.findMany({
-    where: { status: 'READY', duration: { not: null }, analysis: null },
+    where: { status: 'READY', duration: { not: null }, analyses: { none: {} } },
     select: { id: true },
     orderBy: { createdAt: 'asc' },
     take: 100,
@@ -72,7 +72,7 @@ export async function backfillAnalysisJobs(db: PrismaClient) {
   for (const source of sources)
     await db.$transaction(async (tx) => {
       const claimed = await tx.sourceVideo.updateMany({
-        where: { id: source.id, status: 'READY', analysis: null },
+        where: { id: source.id, status: 'READY', analyses: { none: {} } },
         data: { status: 'ANALYZING' },
       });
       if (!claimed.count) return;
@@ -83,7 +83,7 @@ export async function backfillRankingJobs(db: PrismaClient) {
   const sources = await db.sourceVideo.findMany({
     where: {
       status: 'READY',
-      analysis: { is: { status: 'SUCCEEDED' } },
+      analyses: { some: { status: 'SUCCEEDED' } },
       candidates: { some: {} },
       jobs: { none: { kind: 'RANK', state: 'SUCCEEDED' } },
     },

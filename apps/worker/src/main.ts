@@ -42,7 +42,7 @@ const worker = new Worker(
     if (record.kind === 'INGEST') return ingest(db, storage, config, record.id);
     if (record.kind === 'ANALYZE') return analyze(db, storage, config, record.id);
     if (record.kind === 'RANK') return rankCandidates(db, storage, config, record.id);
-    if (record.kind === 'PLAN') return planShorts(db, config, record.id);
+    if (record.kind === 'PLAN') return planShorts(db, storage, config, record.id);
     throw new Error(`Unsupported job kind: ${record.kind}`);
   },
   { connection, concurrency: config.WORKER_CONCURRENCY },

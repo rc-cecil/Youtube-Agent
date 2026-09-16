@@ -55,6 +55,23 @@ enum RenderState {
   FAILED
 }
 
+enum AnalysisMethod {
+  AI
+  HEURISTIC_FALLBACK
+}
+
+enum CandidateDecision {
+  SELECTED
+  REJECTED_LOW_INTEREST
+  REJECTED_NO_PAYOFF
+  REJECTED_DUPLICATE
+  REJECTED_TOO_MUCH_CONTEXT
+  REJECTED_VISUALLY_WEAK
+  REJECTED_LOW_CONFIDENCE
+  REJECTED_NO_CLEAR_EVENT
+  REJECTED_POOR_SHORT_FORMAT
+}
+
 model User {
   id                    String                 @id @default(uuid())
   email                 String                 @unique
@@ -83,6 +100,7 @@ model User {
   experiments           Experiment[]
   experimentAssignments ExperimentAssignment[]
   opsAlerts             OpsAlert[]
+  shortFeedback         ShortFeedback[]
 }
 
 model YouTubeConnection {
@@ -458,11 +476,12 @@ model SourceVideo {
   hasAudio             Boolean?
   container            String?
   frameRate            Float?
+  bitrate              Int?
   createdAt            DateTime             @default(now())
   updatedAt            DateTime             @updatedAt
   assets               VideoAsset[]
   jobs                 JobRun[]
-  analysis             VideoAnalysis?
+  analyses             VideoAnalysis[]
   gameDetection        GameDetection?
   candidates           HighlightCandidate[]
   detectedEvents       DetectedEvent[]
@@ -475,9 +494,14 @@ model SourceVideo {
 
 model VideoAnalysis {
   id                  String               @id @default(uuid())
-  sourceId            String               @unique
+  sourceId            String
   source              SourceVideo          @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   version             Int                  @default(1)
+  analysisVersion     String               @default("analysis-v2")
+  detectorVersion     String               @default("detectors-v2")
+  scoringVersion      String               @default("scoring-v2")
+  method              AnalysisMethod       @default(HEURISTIC_FALLBACK)
+  policySnapshot      Json                 @default("{}")
   status              String               @default("RUNNING")
   sampleRate          Float
   sceneCount          Int                  @default(0)
@@ -490,6 +514,9 @@ model VideoAnalysis {
   updatedAt           DateTime             @updatedAt
   signals             AnalysisSignal[]
   candidates          HighlightCandidate[]
+
+  @@unique([sourceId, version])
+  @@index([sourceId, status, version])
 }
 
 model AnalysisSignal {
@@ -533,6 +560,19 @@ model HighlightCandidate {
   signalScore    Int
   reason         String
   signals        Json
+  eventStart     Float          @default(0)
+  payoffEnd      Float          @default(0)
+  durationClass  String         @default("QUICK")
+  durationReason String         @default("")
+  clusteringPolicy String       @default("generic-v1")
+  analysisMethod AnalysisMethod @default(HEURISTIC_FALLBACK)
+  decision       CandidateDecision @default(REJECTED_LOW_CONFIDENCE)
+  rejectionReason String?
+  shortWorthinessScore Int      @default(0)
+  duplicateScore Float          @default(0)
+  similarityScore Float         @default(0)
+  duplicateEvidence Json        @default("{}")
+  evidenceSummary Json          @default("{}")
   createdAt      DateTime        @default(now())
   score          HighlightScore?
   detectedEvent  DetectedEvent?
@@ -553,6 +593,11 @@ model DetectedEvent {
   confidence      Int
   detectorProfile String
   evidence        Json
+  eventStart      Float              @default(0)
+  keyMoment       Float              @default(0)
+  payoffEnd       Float              @default(0)
+  clusteringPolicy String            @default("generic-v1")
+  policySnapshot Json                @default("{}")
   createdAt       DateTime           @default(now())
 
   @@index([sourceId, eventType])
@@ -578,6 +623,14 @@ model HighlightScore {
   editability               Int
   confidence                Int
   highlightScore            Int
+  chaos                     Int                @default(0)
+  reactionStrength          Int                @default(0)
+  storyCompleteness         Int                @default(0)
+  commentPotential          Int                @default(0)
+  shortWorthinessScore      Int                @default(0)
+  decision                  CandidateDecision  @default(REJECTED_LOW_CONFIDENCE)
+  rejectionReason           String?
+  analysisMethod            AnalysisMethod     @default(HEURISTIC_FALLBACK)
   reason                    String
   provider                  String
   model                     String
@@ -703,6 +756,8 @@ model GeneratedShort {
   predictedPerformanceScore Float?
   predictionConfidence      String?
   strategyVersion           Int?
+  analysisMethod            AnalysisMethod         @default(HEURISTIC_FALLBACK)
+  publishable               Boolean                @default(false)
   createdAt                 DateTime               @default(now())
   updatedAt                 DateTime               @updatedAt
   editPlans                 EditDecisionList[]
@@ -714,6 +769,7 @@ model GeneratedShort {
   reuseReason               String?
   performanceFeature        PerformanceFeature?
   experimentAssignments     ExperimentAssignment[]
+  feedback                  ShortFeedback[]
 
   @@index([userId, createdAt])
   @@index([sourceId, createdAt])
@@ -726,6 +782,7 @@ model EditDecisionList {
   short         GeneratedShort   @relation(fields: [shortId], references: [id], onDelete: Cascade)
   version       Int
   schemaVersion Int              @default(1)
+  editVersion   String           @default("edit-v2")
   document      Json
   validatedAt   DateTime
   createdAt     DateTime         @default(now())
@@ -752,6 +809,13 @@ model RenderArtifact {
   videoCodec         String?
   audioCodec         String?
   hasAudio           Boolean?
+  frameRate          Float?
+  bitrate            Int?
+  renderPreset       String           @default("HIGH")
+  renderVersion      String           @default("remotion-v2")
+  sourceAssetKind    String?
+  sourceSha256       String?
+  presetConfig       Json             @default("{}")
   qc                 Json?
   errorCode          String?
   errorMessage       String?
@@ -760,6 +824,20 @@ model RenderArtifact {
 
   @@index([shortId, createdAt])
   @@index([state, createdAt])
+}
+
+model ShortFeedback {
+  id        String         @id @default(uuid())
+  userId    String
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortId   String
+  short     GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  kind      String
+  note      String?
+  createdAt DateTime       @default(now())
+
+  @@index([shortId, createdAt])
+  @@index([userId, createdAt])
 }
 
 model FailureEvent {
@@ -812,8 +890,8 @@ model EditorialSettings {
   timezone              String   @default("Africa/Accra")
   postingTimes          String[] @default(["12:00", "16:00", "20:00"])
   similarityThreshold   Float    @default(0.78)
-  maxSourcePerDay       Int      @default(2)
-  sourceCooldownMinutes Int      @default(10)
+  maxSourcePerDay       Int      @default(3)
+  sourceCooldownMinutes Int      @default(0)
   bufferDays            Int      @default(3)
   automaticPlanning     Boolean  @default(false)
   updatedAt             DateTime @updatedAt

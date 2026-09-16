@@ -114,8 +114,8 @@ export function EditorialCalendar() {
         <div>
           <h1>Give every moment its place.</h1>
           <p>
-            Three different jobs each day. Your strongest eligible concept gets first choice for
-            HERO.
+            Every posting time is filled from the strongest distinct eligible Shorts. The 8 PM slot
+            still reserves the best Hero candidate first.
           </p>
         </div>
         <Link className="button secondary" to="/shorts">
@@ -334,7 +334,7 @@ export function EditorialCalendar() {
                 />
               </label>
               <label>
-                Source spacing (minutes)
+                Minimum spacing between moments from one source (minutes)
                 <input
                   type="number"
                   min={0}

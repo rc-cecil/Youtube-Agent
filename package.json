@@ -30,6 +30,7 @@
     "remotion:fixture": "tsx scripts/create-remotion-fixture.ts",
     "preremotion:studio": "npm run remotion:fixture",
     "remotion:studio": "remotion studio packages/remotion/src/index.ts --public-dir=packages/remotion/public --config=remotion.config.ts",
+    "report:quality": "tsx scripts/quality-remediation-report.ts",
     "db:generate": "prisma generate --schema packages/db/prisma/schema.prisma",
     "db:migrate": "prisma migrate deploy --schema packages/db/prisma/schema.prisma",
     "db:dev": "prisma migrate dev --schema packages/db/prisma/schema.prisma",
@@ -51,6 +52,7 @@
     "@remotion/media": "4.0.522",
     "@remotion/player": "4.0.522",
     "@remotion/renderer": "4.0.522",
+    "@tesseract.js-data/eng": "^1.0.0",
     "bullmq": "^5.58.5",
     "dotenv": "^17.2.1",
     "fastify": "^5.6.0",
@@ -61,6 +63,7 @@
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.8.2",
     "remotion": "4.0.522",
+    "tesseract.js": "^6.0.1",
     "zod": "4.5.4"
   },
   "devDependencies": {

@@ -4,6 +4,7 @@ import { createReadStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import type { Config } from '../../../packages/config/src/index.js';
 import type { Storage } from '../../../packages/storage/src/index.js';
+import { logger } from '../../../packages/logger/src/index.js';
 import { accessToken } from '../../../packages/youtube/src/credentials.js';
 import {
   beginUpload,
@@ -185,6 +186,32 @@ export async function processPublication(
     const known = error instanceof YouTubeError;
     const attempts = item.attempts + 1;
     const retry = (!known || error.retryable) && attempts < 5;
+    const cause = error instanceof Error ? error.cause : undefined;
+    const nestedCodes =
+      cause && typeof cause === 'object' && 'errors' in cause && Array.isArray(cause.errors)
+        ? cause.errors
+            .map((entry) =>
+              entry && typeof entry === 'object' && 'code' in entry
+                ? String(entry.code)
+                : undefined,
+            )
+            .filter(Boolean)
+        : undefined;
+    logger.error(
+      {
+        publicationId: id,
+        errorName: error instanceof Error ? error.name : 'UnknownError',
+        errorMessage: error instanceof Error ? error.message : 'Unknown publication error',
+        causeCode:
+          cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined,
+        causeMessage:
+          cause && typeof cause === 'object' && 'message' in cause
+            ? String(cause.message)
+            : undefined,
+        nestedCodes,
+      },
+      'YouTube publication step failed',
+    );
     // Never persist provider response bodies, URLs or credentials in errors.
     await db.youTubePublication.updateMany({
       where: { id, updatedAt: item.updatedAt, state: { notIn: ['CANCELLED', 'PUBLISHED'] } },

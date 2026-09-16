@@ -11,6 +11,8 @@ export class MediaError extends Error {
     super(message);
   }
 }
+
+export * from './event-intelligence.js';
 export function runMedia(
   binary: string,
   args: string[],
@@ -144,9 +146,14 @@ const probeSchema = z.object({
       height: z.number().optional(),
       avg_frame_rate: z.string().optional(),
       duration: z.string().optional(),
+      bit_rate: z.string().optional(),
     }),
   ),
-  format: z.object({ format_name: z.string(), duration: z.string().optional() }),
+  format: z.object({
+    format_name: z.string(),
+    duration: z.string().optional(),
+    bit_rate: z.string().optional(),
+  }),
 });
 export function parseProbe(raw: unknown, mime: string) {
   const parsed = probeSchema.safeParse(raw);
@@ -203,6 +210,7 @@ export function parseProbe(raw: unknown, mime: string) {
     hasAudio: Boolean(audio),
     container: format.format_name,
     frameRate,
+    bitrate: Number(format.bit_rate ?? video.bit_rate) || null,
   };
 }
 export async function inspectVideo(
@@ -273,6 +281,157 @@ export async function inspectVideo(
     },
   );
   return metadata;
+}
+
+export async function trackMotionSubject(path: string, start: number, end: number, config: Config) {
+  const chunks: Buffer[] = [];
+  await runMediaStream(
+    config.FFMPEG_PATH,
+    [
+      '-nostdin',
+      '-v',
+      'error',
+      '-ss',
+      String(Math.max(0, start)),
+      '-i',
+      path,
+      '-t',
+      String(Math.max(0.2, end - start)),
+      '-vf',
+      'fps=2,scale=160:90,format=gray',
+      '-f',
+      'rawvideo',
+      'pipe:1',
+    ],
+    Math.min(config.MEDIA_TIMEOUT_MS, 120_000),
+    (chunk) => chunks.push(chunk),
+  );
+  const width = 160,
+    height = 90,
+    frameBytes = width * height,
+    bytes = Buffer.concat(chunks),
+    frames = Math.floor(bytes.length / frameBytes),
+    points: Array<{ time: number; x: number; y: number; confidence: number }> = [];
+  let prior: Buffer | null = null,
+    missing = 0;
+  for (let frameIndex = 0; frameIndex < frames; frameIndex++) {
+    const frame = bytes.subarray(frameIndex * frameBytes, (frameIndex + 1) * frameBytes);
+    if (!prior) {
+      prior = Buffer.from(frame);
+      continue;
+    }
+    let total = 0,
+      weightedX = 0,
+      weightedY = 0,
+      active = 0;
+    for (let index = 0; index < frameBytes; index++) {
+      const difference = Math.abs(frame[index]! - prior[index]!);
+      if (difference < 24) continue;
+      const weight = difference - 23,
+        x = index % width,
+        y = Math.floor(index / width);
+      total += weight;
+      weightedX += x * weight;
+      weightedY += y * weight;
+      active++;
+    }
+    prior = Buffer.from(frame);
+    if (!total || active < frameBytes * 0.002) {
+      missing++;
+      continue;
+    }
+    const activityRatio = active / frameBytes,
+      confidence = Math.max(0, Math.min(1, activityRatio / 0.12));
+    points.push({
+      time: start + frameIndex / 2,
+      x: weightedX / total / (width - 1),
+      y: weightedY / total / (height - 1),
+      confidence,
+    });
+  }
+  const jitter =
+      points.length < 2
+        ? 1
+        : points.slice(1).reduce((sum, point, index) => {
+            const previous = points[index]!;
+            return sum + Math.hypot(point.x - previous.x, point.y - previous.y);
+          }, 0) /
+          (points.length - 1),
+    missingRatio = frames > 1 ? missing / (frames - 1) : 1,
+    meanConfidence = points.length
+      ? points.reduce((sum, point) => sum + point.confidence, 0) / points.length
+      : 0,
+    confidence = Math.max(
+      0,
+      Math.min(
+        1,
+        meanConfidence * 0.65 + (1 - missingRatio) * 0.25 + (1 - Math.min(1, jitter * 4)) * 0.1,
+      ),
+    );
+  return {
+    method: 'MOTION_CENTROID_V1',
+    confidence,
+    jitter,
+    missingRatio,
+    points,
+  };
+}
+
+export async function perceptualVideoHash(path: string, timestamp: number, config: Config) {
+  const chunks: Buffer[] = [];
+  await runMediaStream(
+    config.FFMPEG_PATH,
+    [
+      '-nostdin',
+      '-v',
+      'error',
+      '-ss',
+      String(Math.max(0, timestamp)),
+      '-i',
+      path,
+      '-frames:v',
+      '1',
+      '-vf',
+      'scale=9:8,format=gray',
+      '-f',
+      'rawvideo',
+      'pipe:1',
+    ],
+    Math.min(config.MEDIA_TIMEOUT_MS, 60_000),
+    (chunk) => chunks.push(chunk),
+  );
+  const pixels = Buffer.concat(chunks);
+  if (pixels.length < 72)
+    throw new MediaError('ANALYSIS_FAILED', 'Could not derive a perceptual frame hash.');
+  let bits = '';
+  for (let y = 0; y < 8; y++)
+    for (let x = 0; x < 8; x++) {
+      const offset = y * 9 + x;
+      bits += pixels[offset]! > pixels[offset + 1]! ? '1' : '0';
+    }
+  return BigInt(`0b${bits}`).toString(16).padStart(16, '0');
+}
+
+export function perceptualHashSimilarity(left: string, right: string) {
+  if (!/^[0-9a-f]{16}$/i.test(left) || !/^[0-9a-f]{16}$/i.test(right)) return 0;
+  let difference = BigInt(`0x${left}`) ^ BigInt(`0x${right}`),
+    distance = 0;
+  while (difference) {
+    distance += Number(difference & 1n);
+    difference >>= 1n;
+  }
+  return 1 - distance / 64;
+}
+
+export function visualSequenceSimilarity(left: string[], right: string[]) {
+  if (!left.length || !right.length) return null;
+  const shorter = left.length <= right.length ? left : right,
+    longer = left.length <= right.length ? right : left,
+    aligned = shorter.map((hash, index) => {
+      const mapped = Math.round((index / Math.max(1, shorter.length - 1)) * (longer.length - 1));
+      return perceptualHashSimilarity(hash, longer[mapped]!);
+    });
+  return aligned.reduce((sum, value) => sum + value, 0) / aligned.length;
 }
 
 export type AnalysisSignal = {

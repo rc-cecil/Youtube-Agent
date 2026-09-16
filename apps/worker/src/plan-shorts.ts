@@ -1,12 +1,18 @@
 import { createHash } from 'node:crypto';
+import { readFile, mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { resolve } from 'node:path';
 import { UnrecoverableError } from 'bullmq';
-import type { Prisma, PrismaClient } from '@prisma/client';
+import type { CandidateDecision, Prisma, PrismaClient } from '@prisma/client';
 import type { Config } from '../../../packages/config/src/index.js';
+import { DUPLICATE_POLICY, TRACKING_POLICY } from '../../../packages/config/src/media-policy.js';
 import {
   AIProviderError,
   createShortPlanningProvider,
   SHORT_PLANNING_PROMPT_VERSION,
   shortPlanningSchema,
+  transcribeAudioClip,
+  type TranscriptWord,
 } from '../../../packages/ai/src/index.js';
 import { MAX_ATTEMPTS } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
@@ -16,21 +22,418 @@ import {
   type EditDecisionList,
 } from '../../../packages/remotion/src/public.js';
 import { deterministicArm } from '../../../packages/learning/src/index.js';
+import type { Storage } from '../../../packages/storage/src/index.js';
+import { runMedia, visualSequenceSimilarity } from '../../../packages/video-analysis/src/index.js';
+import {
+  evaluateDuplicate,
+  temporalSimilarity,
+} from '../../../packages/video-analysis/src/event-intelligence.js';
 
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 
+type YieldCandidate = {
+  id: string;
+  startTime: number;
+  eventTime: number;
+  endTime: number;
+  decision?: CandidateDecision;
+  rejectionReason?: string | null;
+  duplicateScore?: number;
+  shortWorthinessScore?: number;
+  score: {
+    highlightScore: number;
+    confidence: number;
+    editability: number;
+    visualClarity: number;
+    contextIndependence: number;
+    shortWorthinessScore?: number;
+  };
+};
+
+export function selectQualifiedShortCandidates<T extends YieldCandidate>(
+  ranked: T[],
+  safetyLimit: number,
+) {
+  if (!ranked.length) return [];
+  const strongest = Math.max(...ranked.map((candidate) => candidate.score.highlightScore)),
+    adaptiveFloor = Math.max(45, Math.min(82, strongest - 18)),
+    accepted: T[] = [];
+  for (const candidate of ranked) {
+    const score = candidate.score,
+      worthiness =
+        score.shortWorthinessScore ?? candidate.shortWorthinessScore ?? score.highlightScore,
+      quality =
+        (score.highlightScore +
+          score.editability +
+          score.visualClarity +
+          score.contextIndependence) /
+        4,
+      overlapsAccepted = accepted.some((other) => {
+        const overlap = Math.max(
+          0,
+          Math.min(candidate.endTime, other.endTime) -
+            Math.max(candidate.startTime, other.startTime),
+        );
+        return (
+          overlap /
+            Math.max(
+              0.01,
+              Math.min(candidate.endTime - candidate.startTime, other.endTime - other.startTime),
+            ) >=
+            0.5 || Math.abs(candidate.eventTime - other.eventTime) < 2
+        );
+      });
+    if (
+      score.highlightScore >= adaptiveFloor &&
+      worthiness >= 55 &&
+      (!candidate.decision || candidate.decision === 'SELECTED') &&
+      (candidate.duplicateScore ?? 0) < DUPLICATE_POLICY.compositeThreshold &&
+      score.confidence >= 25 &&
+      score.editability >= 45 &&
+      score.visualClarity >= 35 &&
+      score.contextIndependence >= 25 &&
+      quality >= 45 &&
+      !overlapsAccepted
+    )
+      accepted.push(candidate);
+    if (accepted.length >= safetyLimit) break;
+  }
+  return accepted;
+}
+
+function tokenSimilarity(a: string, b: string) {
+  const left = new Set(a.toLowerCase().match(/[a-z0-9]+/g) ?? []),
+    right = new Set(b.toLowerCase().match(/[a-z0-9]+/g) ?? []);
+  if (!left.size || !right.size) return 0;
+  const intersection = [...left].filter((token) => right.has(token)).length;
+  return intersection / Math.max(left.size, right.size);
+}
+
+async function removePersistentDuplicates<
+  T extends YieldCandidate & {
+    sourceId: string;
+    eventType: string;
+    reason: string;
+    evidenceSummary: unknown;
+    detectedEvent?: { id: string } | null;
+  },
+>(db: PrismaClient, userId: string, currentGame: string, candidates: T[]) {
+  const publications = await db.youTubePublication.findMany({
+      where: { userId, state: { in: ['PENDING', 'UPLOADING', 'UPLOADED', 'PUBLISHED'] } },
+      select: { shortId: true },
+    }),
+    publishedIds = publications.map((publication) => publication.shortId),
+    history = await db.generatedShort.findMany({
+      where: {
+        userId,
+        OR: [
+          { state: 'READY' },
+          { slateSlot: { isNot: null } },
+          ...(publishedIds.length ? [{ id: { in: publishedIds } }] : []),
+        ],
+      },
+      include: {
+        candidate: { include: { detectedEvent: true } },
+        fingerprint: true,
+        source: { include: { gameDetection: true } },
+      },
+    }),
+    selected: T[] = [];
+  for (const candidate of candidates) {
+    let strongest: ReturnType<typeof evaluateDuplicate> | null = null,
+      matchedId: string | null = null;
+    const comparisons = [
+      ...selected.map((item) => ({
+        id: item.id,
+        sourceId: item.sourceId,
+        start: item.startTime,
+        end: item.endTime,
+        eventId: item.detectedEvent?.id,
+        eventType: item.eventType,
+        reason: item.reason,
+        evidenceSummary: item.evidenceSummary,
+        game: currentGame,
+      })),
+      ...history.map((item) => ({
+        id: item.id,
+        sourceId: item.sourceId,
+        start: item.candidate.startTime,
+        end: item.candidate.endTime,
+        eventId: item.candidate.detectedEvent?.id,
+        eventType: item.eventType,
+        reason: item.candidate.reason,
+        evidenceSummary: item.candidate.evidenceSummary,
+        game: item.source.gameDetection?.game ?? 'Unknown gameplay',
+      })),
+    ];
+    for (const prior of comparisons) {
+      const sameSource = prior.sourceId === candidate.sourceId,
+        temporal = sameSource
+          ? temporalSimilarity(
+              { start: candidate.startTime, end: candidate.endTime },
+              { start: prior.start, end: prior.end },
+            )
+          : { shorterClipOverlap: 0, temporalIoU: 0 },
+        semantic = tokenSimilarity(
+          `${candidate.eventType} ${candidate.reason}`,
+          `${prior.eventType} ${prior.reason}`,
+        ),
+        candidateEvidence = candidate.evidenceSummary as {
+          visualHashes?: string[];
+          transcript?: string;
+        },
+        priorEvidence = prior.evidenceSummary as {
+          visualHashes?: string[];
+          transcript?: string;
+        },
+        visual = visualSequenceSimilarity(
+          candidateEvidence.visualHashes ?? [],
+          priorEvidence.visualHashes ?? [],
+        ),
+        transcript = tokenSimilarity(
+          candidateEvidence.transcript ?? '',
+          priorEvidence.transcript ?? '',
+        ),
+        result = evaluateDuplicate({
+          sameEvent: Boolean(
+            candidate.detectedEvent?.id && candidate.detectedEvent.id === prior.eventId,
+          ),
+          ...temporal,
+          visualSimilarity: visual,
+          semanticSimilarity: semantic,
+          transcriptSimilarity: transcript || null,
+          sameGame: currentGame.toLowerCase() === prior.game.toLowerCase(),
+        });
+      if (!strongest || result.score > strongest.score) {
+        strongest = result;
+        matchedId = prior.id;
+      }
+    }
+    const duplicate = strongest?.duplicate ?? false;
+    await db.highlightCandidate.update({
+      where: { id: candidate.id },
+      data: {
+        duplicateScore: strongest?.score ?? 0,
+        similarityScore: strongest?.score ?? 0,
+        duplicateEvidence: {
+          ...(strongest ?? {
+            components: {},
+            thresholds: {},
+            policyVersion: 'duplicate-policy-v2',
+          }),
+          matchedId,
+        },
+        decision: duplicate ? 'REJECTED_DUPLICATE' : candidate.decision,
+        rejectionReason: duplicate
+          ? `Duplicate of existing event ${matchedId ?? 'in current batch'}.`
+          : candidate.rejectionReason,
+      },
+    });
+    if (!duplicate) selected.push(candidate);
+  }
+  return selected;
+}
+
+type TrackingEvidence = {
+  confidence: number;
+  jitter: number;
+  missingRatio: number;
+  points: Array<{ time: number; x: number; y: number; confidence: number }>;
+};
+
+function trackingEvidence(value: unknown): TrackingEvidence | null {
+  if (!value || typeof value !== 'object') return null;
+  const tracking = (value as { tracking?: unknown }).tracking;
+  if (!tracking || typeof tracking !== 'object') return null;
+  const candidate = tracking as Partial<TrackingEvidence>;
+  if (
+    typeof candidate.confidence !== 'number' ||
+    typeof candidate.jitter !== 'number' ||
+    typeof candidate.missingRatio !== 'number' ||
+    !Array.isArray(candidate.points)
+  )
+    return null;
+  return candidate as TrackingEvidence;
+}
+
+export function resolveTrackingCrop(input: {
+  requested: EditDecisionList['cropStrategy'];
+  evidence: TrackingEvidence | null;
+  sourceAspectRatio: number;
+}) {
+  if (input.requested !== 'TRACKED_CROP')
+    return { strategy: input.requested, confidence: 0, points: [] as TrackingEvidence['points'] };
+  const reliable =
+    input.evidence &&
+    input.evidence.confidence >= TRACKING_POLICY.minimumTrackedCropConfidence &&
+    input.evidence.jitter <= TRACKING_POLICY.maximumNormalizedJitter &&
+    input.evidence.missingRatio <= TRACKING_POLICY.maximumMissingRatio &&
+    input.evidence.points.length >= 3;
+  if (reliable)
+    return {
+      strategy: 'TRACKED_CROP' as const,
+      confidence: input.evidence!.confidence,
+      points: input.evidence!.points,
+    };
+  return {
+    strategy:
+      input.sourceAspectRatio >= 2.1 ? ('BLURRED_BACKGROUND' as const) : ('SMART_CROP' as const),
+    confidence: input.evidence?.confidence ?? 0,
+    points: [] as TrackingEvidence['points'],
+  };
+}
+
+async function candidateTranscript(
+  storage: Storage,
+  config: Config,
+  source: { hasAudio: boolean | null; assets: Array<{ kind: string; storageKey: string }> },
+  candidate: { startTime: number; endTime: number },
+) {
+  if (config.AI_MODE !== 'openai' || !source.hasAudio) return { text: '', words: [] };
+  const asset = source.assets.find((item) => item.kind === 'ORIGINAL');
+  if (!asset) return { text: '', words: [] };
+  const materialized = await storage.materialize(asset.storageKey),
+    work = await mkdtemp(resolve(tmpdir(), 'short-transcript-')),
+    audioPath = resolve(work, 'clip.wav');
+  try {
+    await runMedia(
+      config.FFMPEG_PATH,
+      [
+        '-y',
+        '-nostdin',
+        '-v',
+        'error',
+        '-ss',
+        String(candidate.startTime),
+        '-i',
+        materialized.path,
+        '-t',
+        String(Math.max(0.1, candidate.endTime - candidate.startTime)),
+        '-vn',
+        '-ac',
+        '1',
+        '-ar',
+        '16000',
+        '-c:a',
+        'pcm_s16le',
+        audioPath,
+      ],
+      Math.min(config.MEDIA_TIMEOUT_MS, 120_000),
+    );
+    const transcript = await transcribeAudioClip(config, await readFile(audioPath));
+    return {
+      text: transcript.text.slice(0, 2000),
+      words: transcript.words.map((word) => ({
+        ...word,
+        start: candidate.startTime + word.start,
+        end: candidate.startTime + word.end,
+      })),
+    };
+  } finally {
+    await materialized.release();
+    await rm(work, { recursive: true, force: true });
+  }
+}
+
+function subtitleCaptions(
+  words: TranscriptWord[],
+  eventTime: number,
+  cuts: Array<{
+    sourceStart: number;
+    sourceEnd: number;
+    outputStart: number;
+    speed: number;
+  }>,
+): EditDecisionList['captions'] {
+  const mapped = words
+    .filter((word) => word.start >= eventTime - 4 && word.start <= eventTime + 4)
+    .flatMap((word) => {
+      const cut = cuts.find((item) => word.start >= item.sourceStart && word.end <= item.sourceEnd);
+      if (!cut) return [];
+      return [
+        {
+          word: word.word.trim(),
+          start: cut.outputStart + (word.start - cut.sourceStart) / cut.speed,
+          end: cut.outputStart + (word.end - cut.sourceStart) / cut.speed,
+        },
+      ];
+    })
+    .filter((word) => word.word);
+  const groups: Array<typeof mapped> = [];
+  for (const word of mapped) {
+    const current = groups.at(-1),
+      first = current?.[0];
+    if (
+      !current ||
+      !first ||
+      current.length >= 5 ||
+      word.start - current.at(-1)!.end > 0.45 ||
+      word.end - first.start > 1.6
+    )
+      groups.push([word]);
+    else current.push(word);
+  }
+  return groups.slice(0, 6).map((group) => ({
+    text: group
+      .map((word) => word.word)
+      .join(' ')
+      .slice(0, 80),
+    start: group[0]!.start,
+    end: Math.max(group.at(-1)!.end, group[0]!.start + 0.45),
+    emphasis: [],
+    position: 'BOTTOM',
+    kind: 'WORD_HIGHLIGHT' as const,
+    tokens: group.map((word) => ({
+      text: word.word,
+      startMs: Math.round(word.start * 1000),
+      endMs: Math.round(word.end * 1000),
+      timestampMs: Math.round(word.start * 1000),
+      confidence: null,
+    })),
+  }));
+}
+
 function buildEdl(
   sourceDuration: number,
-  candidate: { startTime: number; eventTime: number; endTime: number },
+  candidate: {
+    id: string;
+    startTime: number;
+    eventTime: number;
+    endTime: number;
+    eventStart: number;
+    payoffEnd: number;
+    durationClass: string;
+    durationReason: string;
+    duplicateScore: number;
+    evidenceSummary: unknown;
+  },
   concept: {
     hook: string;
+    rationale: string;
     titleCandidates: string[];
     description: string;
+    captionBeats: Array<{
+      text: string;
+      timing: 'SETUP' | 'EVENT' | 'PAYOFF';
+      emphasis: string[];
+    }>;
     hashtags: string[];
-    cropStrategy: EditDecisionList['cropStrategy'];
+    cropStrategy: EditDecisionList['cropStrategy'] | 'CENTER' | 'BACKGROUND_BLUR';
     effectPreset: 'CLEAN' | 'PUNCH_IN' | 'IMPACT' | 'REPLAY';
   },
   silence: Array<{ timestamp: number; duration: number }>,
+  transcriptWords: TranscriptWord[],
+  metadata: {
+    sourceVideoId: string;
+    eventId: string;
+    analysisVersion: string;
+    analysisMethod: 'AI' | 'HEURISTIC_FALLBACK';
+    highlightScore: number;
+    shortWorthinessScore: number;
+    reasoningSummary: string;
+    sourceWidth: number;
+    sourceHeight: number;
+  },
 ) {
   const sourceSafeEnd = Math.max(0.05, sourceDuration - 0.1),
     clipStart = Math.min(sourceSafeEnd - 0.04, Math.max(0, candidate.startTime)),
@@ -48,8 +451,42 @@ function buildEdl(
     ),
     effectStart = Math.max(0, eventOutputTime - 0.3),
     effectEnd = Math.min(outputDuration, eventOutputTime + 0.5),
+    captionStart = (timing: 'SETUP' | 'EVENT' | 'PAYOFF') => {
+      if (timing === 'SETUP')
+        return Math.min(Math.max(2.5, eventOutputTime - 2.4), outputDuration - 0.8);
+      if (timing === 'PAYOFF') return Math.min(eventOutputTime + 0.65, outputDuration - 0.8);
+      return Math.min(Math.max(2.5, eventOutputTime - 0.25), outputDuration - 0.8);
+    },
+    spokenCaptions = subtitleCaptions(transcriptWords, candidate.eventTime, cuts),
+    contextCaptions = concept.captionBeats
+      .map((beat) => {
+        const start = Math.max(0, captionStart(beat.timing));
+        return {
+          text: beat.text,
+          start,
+          end: Math.min(outputDuration, start + 1.65),
+          emphasis: beat.emphasis,
+          position: 'BOTTOM' as const,
+        };
+      })
+      .filter((caption) => caption.end - caption.start >= 0.6),
+    captions = spokenCaptions.length
+      ? spokenCaptions
+      : contextCaptions.map((caption) => ({
+          ...caption,
+          kind: 'PHRASE' as const,
+          tokens: [],
+        })),
     overlays: EditDecisionList['overlays'] = [
-      { type: 'PROGRESS', text: '', start: 0, end: outputDuration, x: 0.5, y: 0.9 },
+      {
+        type: 'PROGRESS',
+        text: '',
+        start: 0,
+        end: outputDuration,
+        x: 0.5,
+        y: 0.9,
+        reason: 'Show progress without covering gameplay',
+      },
     ];
   if (concept.effectPreset === 'IMPACT')
     overlays.push({
@@ -59,46 +496,133 @@ function buildEdl(
       end: effectEnd,
       x: 0.5,
       y: 0.67,
+      reason: 'Emphasize the identified key moment',
     });
+  const requestedCrop =
+      concept.cropStrategy === 'CENTER'
+        ? 'CENTER_CROP'
+        : concept.cropStrategy === 'BACKGROUND_BLUR'
+          ? 'BLURRED_BACKGROUND'
+          : concept.cropStrategy,
+    cropResolution = resolveTrackingCrop({
+      requested: requestedCrop,
+      evidence: trackingEvidence(candidate.evidenceSummary),
+      sourceAspectRatio: metadata.sourceWidth / metadata.sourceHeight,
+    }),
+    cropStrategy = cropResolution.strategy,
+    hookType =
+      concept.effectPreset === 'REPLAY'
+        ? 'PAYOFF_TEASE'
+        : concept.effectPreset === 'IMPACT'
+          ? 'ACTION_FIRST'
+          : 'IMMEDIATE_CONTEXT';
+  const replay = canReplay
+    ? {
+        sourceStart: replaySourceStart,
+        sourceEnd: replaySourceEnd,
+        outputStart: baseDuration,
+        speed: 0.65,
+        label: 'REPLAY',
+      }
+    : null;
   return validateEditDecisionList({
-    schemaVersion: 1,
+    schemaVersion: 2,
+    sourceVideoId: metadata.sourceVideoId,
+    eventId: metadata.eventId,
+    candidateId: candidate.id,
+    analysisVersion: metadata.analysisVersion,
+    detectorVersion: 'detectors-v2',
+    scoringVersion: 'scoring-v2',
+    editVersion: 'edit-v2',
     clipStart,
     clipEnd,
     outputDuration,
-    cropStrategy: concept.cropStrategy,
-    trackedSubject: [],
-    hook: { text: concept.hook, start: 0, end: Math.min(outputDuration, 2.4), position: 'TOP' },
+    eventAnchors: {
+      eventStart: Math.max(clipStart, candidate.eventStart),
+      keyMoment: candidate.eventTime,
+      payoffEnd: Math.min(clipEnd, candidate.payoffEnd),
+    },
+    durationClass: candidate.durationClass,
+    durationReason:
+      candidate.durationReason || 'Content-driven setup, action, and payoff boundaries.',
+    cropStrategy,
+    cropSubject: cropStrategy === 'TRACKED_CROP' ? 'MOTION_FOCUS' : null,
+    trackingConfidence: cropResolution.confidence,
+    trackingPolicyVersion: TRACKING_POLICY.version,
+    fallbackStrategy: cropStrategy === 'BLURRED_BACKGROUND' ? 'BLURRED_BACKGROUND' : 'SMART_CROP',
+    trackedSubject: cropResolution.points
+      .map((point) => {
+        const cut = cuts.find(
+          (item) => point.time >= item.sourceStart && point.time <= item.sourceEnd,
+        );
+        if (!cut) return null;
+        return {
+          ...point,
+          time: cut.outputStart + (point.time - cut.sourceStart) / cut.speed,
+        };
+      })
+      .filter((point): point is NonNullable<typeof point> => Boolean(point)),
+    safeRegions: [],
+    hook: concept.hook.trim()
+      ? {
+          type: hookType,
+          text: concept.hook,
+          start: 0,
+          end: Math.min(outputDuration, 1.4),
+          position: 'TOP',
+        }
+      : null,
     cuts,
     zooms:
       concept.effectPreset === 'PUNCH_IN' || concept.effectPreset === 'IMPACT'
-        ? [{ start: effectStart, end: effectEnd, scale: 1.12, focusX: 0.5, focusY: 0.5 }]
+        ? [
+            {
+              start: effectStart,
+              end: effectEnd,
+              scale: 1.12,
+              focusX: 0.5,
+              focusY: 0.5,
+              reason: 'Punch in on the identified key moment',
+            },
+          ]
         : [],
     freezeFrames: [],
-    replay: canReplay
-      ? {
-          sourceStart: replaySourceStart,
-          sourceEnd: replaySourceEnd,
-          outputStart: baseDuration,
-          speed: 0.65,
-          label: 'REPLAY',
-        }
-      : null,
-    captions: [],
+    replay,
+    replays: replay ? [replay] : [],
+    captions,
     overlays,
+    soundEffects:
+      concept.effectPreset === 'IMPACT'
+        ? [{ key: 'IMPACT', start: effectStart, volume: 0.32, reason: 'Reinforce the key impact' }]
+        : [],
     audioInstructions: { preserveOriginal: true, normalize: true, gainDb: 0, ducking: [] },
+    editorialRole: null,
+    editingIntensity: concept.effectPreset === 'CLEAN' ? 'LOW' : 'MEDIUM',
+    concept: concept.rationale,
     title: concept.titleCandidates[0],
+    titleCandidates: concept.titleCandidates,
     description: concept.description,
     hashtags: concept.hashtags,
+    analysisMethod: metadata.analysisMethod,
+    highlightScore: metadata.highlightScore,
+    shortWorthinessScore: metadata.shortWorthinessScore,
+    duplicateScore: candidate.duplicateScore,
+    reasoningSummary: metadata.reasoningSummary,
   });
 }
 
-export async function planShorts(db: PrismaClient, config: Config, id: string) {
+export async function planShorts(db: PrismaClient, storage: Storage, config: Config, id: string) {
   const job = await db.jobRun.findUniqueOrThrow({
     where: { id },
     include: {
       source: {
         include: {
-          analysis: { include: { signals: { where: { kind: 'SILENCE' } } } },
+          assets: true,
+          analyses: {
+            orderBy: { version: 'desc' },
+            take: 1,
+            include: { signals: { where: { kind: 'SILENCE' } } },
+          },
           gameDetection: true,
           candidates: {
             where: { score: { isNot: null } },
@@ -140,14 +664,26 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
       update: {},
     });
     const provider = createShortPlanningProvider(config),
-      candidates = job.source.candidates.slice(0, config.SHORTS_PER_SOURCE_LIMIT),
+      initiallyQualified = selectQualifiedShortCandidates(
+        job.source.candidates.filter(
+          (candidate) => candidate.analysisId === job.source.analyses[0]?.id,
+        ) as Array<(typeof job.source.candidates)[number] & YieldCandidate>,
+        config.SHORTS_PER_SOURCE_LIMIT,
+      ),
       ownerHash = hash(job.source.userId).slice(0, 64),
-      silence = (job.source.analysis?.signals ?? [])
+      silence = (job.source.analyses[0]?.signals ?? [])
         .filter((signal) => signal.duration)
         .map((signal) => ({ timestamp: signal.timestamp, duration: signal.duration! }));
+    const candidates = await removePersistentDuplicates(
+      db,
+      job.source.userId,
+      job.source.gameDetection?.game ?? 'Unknown gameplay',
+      initiallyQualified,
+    );
     for (let index = 0; index < candidates.length; index++) {
       const candidate = candidates[index]!,
-        score = candidate.score!;
+        score = candidate.score!,
+        transcript = await candidateTranscript(storage, config, job.source, candidate);
       const signature = {
           sourceHash: job.source.sha256,
           game: job.source.gameDetection?.game ?? 'Unknown gameplay',
@@ -162,6 +698,20 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
           visualClarity: score.visualClarity,
           preferredHashtags: settings.preferredHashtags,
           bannedHashtags: settings.bannedHashtags,
+          transcript: transcript.text,
+          editorialSignals: {
+            excitement: score.excitement,
+            surprise: score.surprise,
+            skill: score.skill,
+            humor: score.humor,
+            tension: score.tension,
+            emotionalReaction: score.emotionalReaction,
+            hookPotential: score.hookPotential,
+            retentionPotential: score.retentionPotential,
+            sharePotential: score.sharePotential,
+            novelty: score.novelty,
+            editability: score.editability,
+          },
         },
         inputHash = hash(
           JSON.stringify({ ownerHash, promptVersion: SHORT_PLANNING_PROMPT_VERSION, ...signature }),
@@ -189,6 +739,8 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
             inputHash,
             ownerHash,
             sourceDuration: job.source.duration,
+            sourceWidth: job.source.width,
+            sourceHeight: job.source.height,
             ...signature,
           });
       const selected = result.output.concepts.find(
@@ -196,7 +748,17 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
       );
       if (!selected)
         throw new AIProviderError('AI_INVALID_RESPONSE', 'Selected short concept is missing.');
-      const edl = buildEdl(job.source.duration, candidate, selected, silence),
+      const edl = buildEdl(job.source.duration, candidate, selected, silence, transcript.words, {
+          sourceVideoId: job.source.id,
+          eventId: candidate.detectedEvent?.id ?? candidate.id,
+          analysisVersion: job.source.analyses[0]?.analysisVersion ?? 'analysis-v2',
+          analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
+          highlightScore: score.highlightScore,
+          shortWorthinessScore: score.shortWorthinessScore,
+          reasoningSummary: score.reason,
+          sourceWidth: job.source.width,
+          sourceHeight: job.source.height,
+        }),
         qualityScore = Math.round(
           (score.highlightScore +
             score.visualClarity +
@@ -273,6 +835,8 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
             predictedPerformanceScore: score.predictedPerformanceScore,
             predictionConfidence: score.predictionConfidence,
             strategyVersion: score.strategyVersion,
+            analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
+            publishable: result.provider === 'openai',
           },
         });
         const experiments = await tx.experiment.findMany({
@@ -291,7 +855,8 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
           data: {
             shortId: short.id,
             version: 1,
-            schemaVersion: 1,
+            schemaVersion: 2,
+            editVersion: 'edit-v2',
             document: edl as Prisma.InputJsonValue,
             validatedAt: new Date(),
           },
@@ -313,7 +878,13 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
       data: { state: 'SUCCEEDED', progress: 100, finishedAt: new Date() },
     });
     logger.info(
-      { jobId: id, sourceId: job.sourceId, shortCount: candidates.length, provider: provider.name },
+      {
+        jobId: id,
+        sourceId: job.sourceId,
+        rankedCount: job.source.candidates.length,
+        shortCount: candidates.length,
+        provider: provider.name,
+      },
       'Short concepts and edit plans completed',
     );
   } catch (error) {
@@ -321,7 +892,7 @@ export async function planShorts(db: PrismaClient, config: Config, id: string) {
       message =
         error instanceof AIProviderError
           ? error.message
-          : 'Short planning failed. Check AI configuration and retry.',
+          : 'Short planning failed. Check worker health and retry.',
       terminal =
         (error instanceof AIProviderError && error.permanent) || running.attempt >= MAX_ATTEMPTS;
     await db.$transaction([

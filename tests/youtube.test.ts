@@ -102,7 +102,7 @@ describe('YouTube security and provider contracts', () => {
       selfDeclaredMadeForKids: false,
     });
     expect(JSON.parse(String(init.body)).status.publishAt).toBeUndefined();
-    expect(init.redirect).toBe('error');
+    expect(init.redirect).toBe('manual');
   });
   it('probes interruption before resuming at the server offset', async () => {
     const transport = fake(new Response(null, { status: 308, headers: { range: 'bytes=0-255' } }));

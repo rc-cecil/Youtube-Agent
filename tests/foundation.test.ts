@@ -20,7 +20,9 @@ import {
   MockShortPlanningProvider,
   OpenAIShortPlanningProvider,
   shortPlanningSchema,
+  transcribeAudioClip,
 } from '../packages/ai/src/index.js';
+import { selectQualifiedShortCandidates } from '../apps/worker/src/plan-shorts.js';
 import {
   cutsWithoutDeadAir,
   editDecisionListSchema,
@@ -80,8 +82,8 @@ describe('configuration', () => {
     expect(() => parseConfig({ ...env, TIMEZONE: 'invalid-zone' })).toThrow();
     expect(() => parseConfig({ ...env, WORKER_CONCURRENCY: '0' })).toThrow();
   });
-  it('requires explicit OpenAI credentials and a vision model in live mode', () => {
-    expect(() => parseConfig({ ...env, AI_MODE: 'openai' })).toThrow('OPENAI_API_KEY');
+  it('allows transparent heuristic drafts when local OpenAI credentials are absent', () => {
+    expect(() => parseConfig({ ...env, AI_MODE: 'openai' })).not.toThrow();
     expect(() =>
       parseConfig({
         ...env,
@@ -302,7 +304,7 @@ describe('Phase 3 game intelligence', () => {
     expect(result.output.rankings[0]?.reason).toContain('no semantic event claim');
     expect(candidateRankingSchema.safeParse(result.output).success).toBe(true);
   });
-  it('uses the Responses API with strict structured output and low-detail finalist frames', async () => {
+  it('uses the Responses API with strict structured output and high-detail adaptive frames', async () => {
     let requestBody: Record<string, unknown> | undefined;
     const config = parseConfig({
         DATABASE_URL: 'postgresql://localhost/test',
@@ -323,15 +325,29 @@ describe('Phase 3 game intelligence', () => {
         humor: 20,
         tension: 65,
         emotionalReaction: 55,
+        chaos: 64,
+        reactionStrength: 55,
         visualClarity: 90,
+        storyCompleteness: 84,
         contextIndependence: 70,
         hookPotential: 85,
         retentionPotential: 80,
         sharePotential: 72,
+        commentPotential: 69,
         novelty: 50,
         editability: 88,
         confidence: 91,
         highlightScore: 81,
+        shortWorthinessScore: 83,
+        decision: 'SELECTED',
+        rejectionReason: null,
+        eventStart: 10,
+        keyMoment: 16,
+        payoffEnd: 22,
+        recommendedStart: 8,
+        recommendedEnd: 24,
+        durationReason: 'The complete setup and payoff fit in this interval.',
+        eventSummary: 'A visible combat sequence builds to a clear payoff.',
         reason: 'The visible sequence has a clear setup and payoff.',
       },
       provider = new OpenAICandidateRankingProvider(config, async (_input, init) => {
@@ -362,7 +378,7 @@ describe('Phase 3 game intelligence', () => {
       prompt_cache_key: 'input-hash',
       text: { format: { type: 'json_schema', strict: true } },
     });
-    expect(JSON.stringify(requestBody)).toContain('"detail":"low"');
+    expect(JSON.stringify(requestBody)).toContain('"detail":"high"');
     expect(result.output.rankings[0]?.highlightScore).toBe(81);
     expect(result.estimatedCostUsd).toBe(0.002);
   });
@@ -419,6 +435,20 @@ describe('Phase 4 short creation', () => {
     visualClarity: 90,
     preferredHashtags: ['#creator'],
     bannedHashtags: ['#spoiler'],
+    transcript: 'I cannot believe that worked',
+    editorialSignals: {
+      excitement: 88,
+      surprise: 84,
+      skill: 76,
+      humor: 20,
+      tension: 72,
+      emotionalReaction: 81,
+      hookPotential: 90,
+      retentionPotential: 86,
+      sharePotential: 79,
+      novelty: 74,
+      editability: 92,
+    },
   };
   it('creates three distinct, valid and truthful concepts in deterministic mode', async () => {
     const result = await new MockShortPlanningProvider().plan(planningInput);
@@ -433,6 +463,13 @@ describe('Phase 4 short creation', () => {
     expect(result.output.concepts.every((concept) => !concept.hashtags.includes('#spoiler'))).toBe(
       true,
     );
+    expect(result.output.concepts.every((concept) => concept.cropStrategy === 'SMART_CROP')).toBe(
+      true,
+    );
+    expect(result.output.concepts.every((concept) => concept.captionBeats.length === 1)).toBe(true);
+    expect(
+      result.output.concepts.every((concept) => !concept.titleCandidates[0]!.includes('_')),
+    ).toBe(true);
     expect(shortPlanningSchema.safeParse(result.output).success).toBe(true);
   });
   it('removes only interior measured dead air and preserves setup/payoff', () => {
@@ -441,6 +478,57 @@ describe('Phase 4 short creation', () => {
       { sourceStart: 15, sourceEnd: 20, outputStart: 3, speed: 1 },
     ]);
     expect(cutsWithoutDeadAir(10, 20, [{ timestamp: 10, duration: 3 }])).toHaveLength(1);
+  });
+  it('uses ranked evidence to determine yield instead of always creating three Shorts', () => {
+    const ranked = Array.from({ length: 12 }, (_, index) => ({
+      id: String(index),
+      startTime: index * 20,
+      eventTime: index * 20 + 8,
+      endTime: index * 20 + 14,
+      score: {
+        highlightScore: index < 10 ? 88 - index : 42,
+        confidence: 80,
+        editability: 80,
+        visualClarity: 80,
+        contextIndependence: 80,
+      },
+    }));
+    expect(selectQualifiedShortCandidates(ranked, 24)).toHaveLength(10);
+    expect(selectQualifiedShortCandidates(ranked, 6)).toHaveLength(6);
+    expect(
+      selectQualifiedShortCandidates(
+        ranked.map((candidate) => ({
+          ...candidate,
+          score: { ...candidate.score, highlightScore: 30 },
+        })),
+        24,
+      ),
+    ).toHaveLength(0);
+  });
+  it('parses timestamped speech for selective subtitle generation', async () => {
+    const config = parseConfig({
+      DATABASE_URL: 'postgresql://localhost/test',
+      REDIS_URL: 'redis://localhost',
+      AI_MODE: 'openai',
+      OPENAI_API_KEY: 'test-key',
+      AI_VISION_MODEL: 'vision',
+    });
+    const result = await transcribeAudioClip(config, new Uint8Array([1, 2, 3]), (async (
+      _url,
+      init,
+    ) => {
+      expect(init?.body).toBeInstanceOf(FormData);
+      return new Response(
+        JSON.stringify({
+          text: 'No way that worked',
+          words: [
+            { word: 'No', start: 0, end: 0.2 },
+            { word: 'way', start: 0.21, end: 0.4 },
+          ],
+        }),
+      );
+    }) as typeof fetch);
+    expect(result.words).toHaveLength(2);
   });
   it('rejects late hooks, unsafe tracking, invalid captions and timelines over 60 seconds', () => {
     const valid = {
@@ -507,7 +595,7 @@ describe('Phase 4 short creation', () => {
       prompt_cache_key: 'plan-hash',
       text: { format: { type: 'json_schema', strict: true } },
     });
-    expect(JSON.stringify(body)).toContain('none is supplied here');
+    expect(JSON.stringify(body)).toContain('never fake speech');
     expect(result.output.selectedKey).toBe(mockOutput.selectedKey);
   });
 });

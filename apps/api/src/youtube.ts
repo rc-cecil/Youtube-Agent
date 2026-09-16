@@ -338,13 +338,16 @@ export function registerYouTube(
         !render.storageKey ||
         !render.sha256 ||
         !render.bytes ||
+        render.renderPreset !== 'HIGH' ||
+        !short.publishable ||
+        short.analysisMethod !== 'AI' ||
         !short.source.rightsAcknowledgedAt ||
         !approved
       )
         throw new AppError(
           409,
           'PREFLIGHT_FAILED',
-          'Short must pass QC, rights and approval thresholds.',
+          'Short must be AI-evaluated, publishable, HIGH-rendered, and pass QC, rights, and approval thresholds.',
         );
       if (slot.plannedAt.getTime() < Date.now() + 10 * 60_000)
         throw new AppError(

@@ -1830,6 +1830,35 @@
   font-size: 12px;
 }
 
+.candidate-video {
+  width: 144px;
+  aspect-ratio: 9 / 16;
+  object-fit: cover;
+  border-radius: 14px;
+  background: #050607;
+}
+
+.candidate-decisions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  color: var(--muted-foreground);
+  font-size: 0.78rem;
+}
+
+.candidate-rejection {
+  color: #f3a6a6;
+}
+
+.feedback-actions,
+.composition-controls .detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 .candidate-row p {
   margin: 4px 0 0;
 }

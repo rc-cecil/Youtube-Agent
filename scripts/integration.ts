@@ -137,7 +137,7 @@ function startWorker(overrides = config) {
         : job.kind === 'RANK'
           ? rankCandidates(db, storage, overrides, job.id)
           : job.kind === 'PLAN'
-            ? planShorts(db, overrides, job.id)
+            ? planShorts(db, storage, overrides, job.id)
             : ingest(db, storage, overrides, job.id);
     },
     { connection: redis, concurrency: 2 },
@@ -383,11 +383,21 @@ try {
   assert(rankedCandidates.every((candidate) => candidate.score?.provider === 'mock'));
   assert(rankedCandidates.every((candidate) => candidate.score?.confidence === 35));
   assert.equal(await db.aiResultCache.count({ where: { sourceId: source.id } }), 1);
+  const rankedEvidence = await db.highlightCandidate.findMany({
+      where: { sourceId: source.id, score: { isNot: null } },
+      select: { evidenceSummary: true },
+    }),
+    adaptiveFrameCount = rankedEvidence.reduce((sum, candidate) => {
+      const timestamps = (candidate.evidenceSummary as { frameTimestamps?: number[] })
+        .frameTimestamps;
+      return sum + (timestamps?.length ?? 0);
+    }, 0);
+  assert(adaptiveFrameCount > rankedEvidence.length * 3);
   assert.equal(
     await db.videoAsset.count({
       where: { sourceId: source.id, kind: { startsWith: 'ANALYSIS_FRAME_' } },
     }),
-    Math.min(config.AI_FINALIST_LIMIT, details.candidates?.length ?? 0) * 3,
+    adaptiveFrameCount,
   );
   assert(details.assets?.some((asset) => asset.kind === 'PROXY'));
   assert(details.assets?.some((asset) => asset.kind === 'THUMBNAIL'));
@@ -458,10 +468,30 @@ try {
   );
   assert.equal(
     analysisList.sources.find((item) => item.id === source.id)?.candidates?.[0]?.score?.cached,
-    true,
+    false,
   );
-  assert.equal(analysisList.aiUsage.calls, 2);
+  assert.equal(analysisList.aiUsage.calls, 3);
   pass('manual reanalysis is serialized, reranked and preserves an explicit game override');
+  const fixtureCandidate = await db.highlightCandidate.findFirstOrThrow({
+    where: { sourceId: source.id },
+    orderBy: { createdAt: 'desc' },
+    include: { score: true },
+  });
+  await db.highlightCandidate.update({
+    where: { id: fixtureCandidate.id },
+    data: { decision: 'SELECTED', shortWorthinessScore: 90, rejectionReason: null },
+  });
+  await db.highlightScore.update({
+    where: { candidateId: fixtureCandidate.id },
+    data: {
+      highlightScore: 90,
+      shortWorthinessScore: 90,
+      confidence: 80,
+      editability: 80,
+      visualClarity: 80,
+      contextIndependence: 80,
+    },
+  });
   const planResponse = await request(owner.cookie, 'POST', `/api/sources/${source.id}/shorts`);
   assert.equal(planResponse.statusCode, 202, planResponse.body);
   await reconcileJobs(db, queue, ['INGEST', 'ANALYZE', 'RANK', 'PLAN']);
@@ -472,7 +502,7 @@ try {
     });
     return planning?.state === 'SUCCEEDED';
   }, 'short concept planning');
-  assert.equal(await db.aiResultCache.count({ where: { sourceId: source.id } }), 3);
+  assert.equal(await db.aiResultCache.count({ where: { sourceId: source.id } }), 4);
   const shortsResponse = await request(owner.cookie, 'GET', '/api/shorts');
   assert.equal(shortsResponse.statusCode, 200, shortsResponse.body);
   const plannedShorts = shortsResponse.json<{
@@ -481,19 +511,29 @@ try {
   assert(plannedShorts.length > 0);
   const planned = plannedShorts.find((item) => item.game === 'Fortnite')!;
   assert.equal(planned.state, 'EDIT_PLANNED');
+  assert.equal(
+    (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).publishable,
+    false,
+  );
   const shortDetail = await request(owner.cookie, 'GET', `/api/shorts/${planned.id}`);
   assert.equal(shortDetail.statusCode, 200, shortDetail.body);
   const shortJson = shortDetail.json<{
     candidate: { concepts: unknown[] };
     editPlans: Array<{
-      document: { outputDuration: number; hook: { start: number }; cropStrategy: string };
+      document: {
+        outputDuration: number;
+        hook: { start: number };
+        cropStrategy: string;
+        captions: Array<{ text: string }>;
+      };
     }>;
     renders: Array<{ state: string }>;
   }>();
   assert.equal(shortJson.candidate.concepts.length, 3);
   assert(shortJson.editPlans[0]!.document.outputDuration <= 60);
   assert.equal(shortJson.editPlans[0]!.document.hook.start, 0);
-  assert.equal(shortJson.editPlans[0]!.document.cropStrategy, 'BACKGROUND_BLUR');
+  assert.equal(shortJson.editPlans[0]!.document.cropStrategy, 'SMART_CROP');
+  assert.equal(shortJson.editPlans[0]!.document.captions.length, 1);
   assert.equal(shortJson.renders[0]!.state, 'PENDING');
   assert.equal((await request(other.cookie, 'GET', `/api/shorts/${planned.id}`)).statusCode, 404);
   assert.equal(
@@ -542,6 +582,10 @@ try {
     ).statusCode,
     200,
   );
+  await db.generatedShort.update({
+    where: { id: planned.id },
+    data: { publishable: true, analysisMethod: 'AI' },
+  });
   const planDate = addDays(localDate(new Date(), 'Africa/Accra'), 1);
   const planRequests = await Promise.all([
     request(owner.cookie, 'POST', '/api/editorial/plan', { date: planDate }),
@@ -667,7 +711,15 @@ try {
   );
   assert.equal(
     (await request(owner.cookie, 'POST', `/api/sources/${source.id}/analyze`)).statusCode,
-    409,
+    202,
+  );
+  assert.equal(
+    (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).state,
+    'ARCHIVED',
+  );
+  assert.equal(
+    (await db.generatedShort.findUniqueOrThrow({ where: { id: planned.id } })).publishable,
+    false,
   );
   assert.equal(
     (
@@ -681,7 +733,7 @@ try {
     await db.generatedShort.count({ where: { sourceId: source.id } }),
     plannedShorts.length,
   );
-  pass('generated Shorts lock their source analysis and game evidence against invalidation');
+  pass('append-only reanalysis archives prior Shorts while retaining the baseline artifacts');
   await ingest(db, storage, config, job.id);
   assert.equal((await db.jobRun.findUniqueOrThrow({ where: { id: job.id } })).attempt, 1);
   pass('duplicate job execution is a terminal-success no-op');

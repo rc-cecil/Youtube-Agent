@@ -27,6 +27,22 @@ import { registerAnalytics } from './analytics.js';
 import { registerLearning } from './learning.js';
 import { hardeningChecks, readinessStatus } from '../../../packages/ops/src/index.js';
 
+function visibleJobs<T extends { sourceId: string; kind: string; state: string; createdAt: Date }>(
+  jobs: T[],
+) {
+  return jobs.filter(
+    (job) =>
+      job.state !== 'FAILED' ||
+      !jobs.some(
+        (newer) =>
+          newer.sourceId === job.sourceId &&
+          newer.kind === job.kind &&
+          newer.state !== 'FAILED' &&
+          newer.createdAt > job.createdAt,
+      ),
+  );
+}
+
 export async function buildApp(
   db: PrismaClient,
   storage: Storage,
@@ -215,7 +231,7 @@ export async function buildApp(
         take: 25,
         include: {
           jobs: { orderBy: { createdAt: 'desc' }, take: 1 },
-          analysis: true,
+          analyses: { orderBy: { version: 'desc' }, take: 1 },
           gameDetection: true,
           _count: { select: { candidates: true } },
           shorts: { select: { id: true, state: true, reviewState: true, title: true } },
@@ -223,7 +239,14 @@ export async function buildApp(
       }),
       db.sourceVideo.count({ where }),
     ]);
-    return { sources, total, page: query.page };
+    return {
+      sources: sources.map(({ analyses, ...source }) => ({
+        ...source,
+        analysis: analyses[0] ?? null,
+      })),
+      total,
+      page: query.page,
+    };
   });
   app.get<{ Params: { id: string } }>(
     '/api/sources/:id',
@@ -233,7 +256,7 @@ export async function buildApp(
         where: { id: req.params.id, userId: req.userId },
         include: {
           jobs: { orderBy: { createdAt: 'desc' }, include: { failures: true } },
-          analysis: true,
+          analyses: { orderBy: { version: 'desc' }, include: { signals: true } },
           gameDetection: true,
           candidates: {
             orderBy: [{ signalScore: 'desc' }, { eventTime: 'asc' }],
@@ -241,6 +264,7 @@ export async function buildApp(
           },
           assets: { select: { kind: true, bytes: true } },
           shorts: {
+            where: { state: { not: 'ARCHIVED' } },
             orderBy: { createdAt: 'desc' },
             include: {
               selectedConcept: true,
@@ -250,7 +274,16 @@ export async function buildApp(
         },
       });
       if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
-      return source;
+      const { analyses, ...rest } = source;
+      return {
+        ...rest,
+        analysis: analyses[0] ?? null,
+        candidates: source.candidates.filter(
+          (candidate) => candidate.analysisId === analyses[0]?.id,
+        ),
+        analysisVersions: analyses.map(({ signals: _signals, ...analysis }) => analysis),
+        jobs: visibleJobs(source.jobs),
+      };
     },
   );
   app.get<{ Params: { id: string } }>(
@@ -287,11 +320,11 @@ export async function buildApp(
   app.get('/api/analysis', { preHandler: requireAuth }, async (req) => {
     const [sources, usage, calls] = await Promise.all([
       db.sourceVideo.findMany({
-        where: { userId: req.userId, analysis: { is: { status: 'SUCCEEDED' } } },
+        where: { userId: req.userId, analyses: { some: { status: 'SUCCEEDED' } } },
         orderBy: { updatedAt: 'desc' },
         take: 100,
         include: {
-          analysis: true,
+          analyses: { where: { status: 'SUCCEEDED' }, orderBy: { version: 'desc' }, take: 1 },
           gameDetection: true,
           candidates: {
             where: { score: { isNot: null } },
@@ -317,13 +350,22 @@ export async function buildApp(
       db.aiResultCache.count({ where: { source: { userId: req.userId } } }),
     ]);
     return {
-      sources,
+      sources: sources.map(({ analyses, ...source }) => ({
+        ...source,
+        analysis: analyses[0] ?? null,
+        candidates: source.candidates.filter(
+          (candidate) => candidate.analysisId === analyses[0]?.id,
+        ),
+      })),
       aiUsage: {
         calls,
         inputTokens: usage._sum.inputTokens ?? 0,
         outputTokens: usage._sum.outputTokens ?? 0,
         estimatedCostUsd: usage._sum.estimatedCostUsd ?? 0,
-        mode: config.AI_MODE,
+        mode:
+          config.AI_MODE === 'openai' && config.OPENAI_API_KEY && config.AI_VISION_MODEL
+            ? 'openai'
+            : 'mock',
       },
     };
   });
@@ -335,17 +377,11 @@ export async function buildApp(
         await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const source = await tx.sourceVideo.findFirst({
           where: { id: req.params.id, userId: req.userId },
-          include: { _count: { select: { shorts: true } } },
+          include: { shorts: { select: { id: true, state: true } } },
         });
         if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
         if (!source.duration)
           throw new AppError(409, 'NOT_INGESTED', 'The source must pass ingestion before analysis');
-        if (source._count.shorts)
-          throw new AppError(
-            409,
-            'SHORTS_EXIST',
-            'Analysis is locked after Shorts are generated so their source evidence remains stable.',
-          );
         const active = await tx.jobRun.findFirst({
           where: {
             sourceId: source.id,
@@ -354,9 +390,20 @@ export async function buildApp(
           },
         });
         if (active) throw new AppError(409, 'ANALYSIS_ACTIVE', 'Analysis is already running');
+        if (source.shorts.length) {
+          await tx.slateSlot.deleteMany({ where: { short: { sourceId: source.id } } });
+          await tx.generatedShort.updateMany({
+            where: { sourceId: source.id, state: { not: 'ARCHIVED' } },
+            data: { state: 'ARCHIVED', publishable: false },
+          });
+        }
         await tx.sourceVideo.update({ where: { id: source.id }, data: { status: 'ANALYZING' } });
         await tx.auditLog.create({
-          data: { userId: req.userId, action: 'ANALYSIS_REQUESTED', resourceId: source.id },
+          data: {
+            userId: req.userId,
+            action: source.shorts.length ? 'REANALYSIS_REQUESTED' : 'ANALYSIS_REQUESTED',
+            resourceId: source.id,
+          },
         });
         return tx.jobRun.create({ data: { sourceId: source.id, kind: 'ANALYZE' } });
       });
@@ -372,12 +419,17 @@ export async function buildApp(
         const source = await tx.sourceVideo.findFirst({
           where: { id: req.params.id, userId: req.userId },
           include: {
-            candidates: { where: { score: { isNot: null } }, take: 1 },
-            shorts: { take: 1 },
+            candidates: {
+              where: { score: { isNot: null } },
+              orderBy: { createdAt: 'desc' },
+              take: 100,
+            },
+            analyses: { orderBy: { version: 'desc' }, take: 1 },
+            shorts: { where: { state: { not: 'ARCHIVED' } }, take: 1 },
           },
         });
         if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
-        if (!source.candidates.length)
+        if (!source.candidates.some((candidate) => candidate.analysisId === source.analyses[0]?.id))
           throw new AppError(
             409,
             'NOT_RANKED',
@@ -430,6 +482,7 @@ export async function buildApp(
               filename: true,
               width: true,
               height: true,
+              frameRate: true,
               hasAudio: true,
               rightsAcknowledgedAt: true,
             },
@@ -443,6 +496,7 @@ export async function buildApp(
             orderBy: { createdAt: 'desc' },
             include: { job: { include: { failures: true } } },
           },
+          feedback: { orderBy: { createdAt: 'desc' } },
         },
       });
       if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
@@ -474,6 +528,9 @@ export async function buildApp(
     '/api/shorts/:id/render',
     { preHandler: requireAuth },
     async (req, reply) => {
+      const input = z
+        .object({ preset: z.enum(['PREVIEW', 'STANDARD', 'HIGH']).default('HIGH') })
+        .parse(req.body ?? {});
       const artifact = await db.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.userId} FOR UPDATE`;
         await invalidateSlates(tx, req.userId, req.params.id);
@@ -499,7 +556,12 @@ export async function buildApp(
           data: { userId: req.userId, action: 'SHORT_RENDER_REQUESTED', resourceId: short.id },
         });
         return tx.renderArtifact.create({
-          data: { shortId: short.id, editDecisionListId: short.editPlans[0].id, jobId: job.id },
+          data: {
+            shortId: short.id,
+            editDecisionListId: short.editPlans[0].id,
+            jobId: job.id,
+            renderPreset: input.preset,
+          },
         });
       });
       return reply.code(202).send(artifact);
@@ -542,7 +604,8 @@ export async function buildApp(
           data: {
             shortId: short.id,
             version: short.editPlans[0].version + 1,
-            schemaVersion: 1,
+            schemaVersion: 2,
+            editVersion: 'edit-v2',
             document: edl,
             validatedAt: new Date(),
           },
@@ -556,6 +619,81 @@ export async function buildApp(
         });
         return tx.generatedShort.update({ where: { id: short.id }, data: input });
       });
+    },
+  );
+  app.patch<{ Params: { id: string } }>(
+    '/api/shorts/:id/edl',
+    { preHandler: requireAuth },
+    async (req) => {
+      const input = z.object({ document: z.unknown() }).parse(req.body);
+      const edl = validateEditDecisionList(input.document);
+      return db.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM "GeneratedShort" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
+        const short = await tx.generatedShort.findFirst({
+          where: { id: req.params.id, userId: req.userId },
+          include: { editPlans: { orderBy: { version: 'desc' }, take: 1 } },
+        });
+        if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
+        await invalidateSlates(tx, req.userId, short.id);
+        const plan = await tx.editDecisionList.create({
+          data: {
+            shortId: short.id,
+            version: (short.editPlans[0]?.version ?? 0) + 1,
+            schemaVersion: 2,
+            editVersion: 'edit-v2',
+            document: edl,
+            validatedAt: new Date(),
+          },
+        });
+        await tx.generatedShort.update({
+          where: { id: short.id },
+          data: {
+            state: 'EDIT_PLANNED',
+            reviewState: 'PENDING',
+            title: edl.title,
+            titleCandidates: edl.titleCandidates,
+            description: edl.description,
+            hashtags: edl.hashtags,
+            duration: edl.outputDuration,
+            publishable: edl.analysisMethod === 'AI',
+          },
+        });
+        await tx.auditLog.create({
+          data: { userId: req.userId, action: 'SHORT_EDL_REVISED', resourceId: short.id },
+        });
+        return plan;
+      });
+    },
+  );
+  app.post<{ Params: { id: string } }>(
+    '/api/shorts/:id/feedback',
+    { preHandler: requireAuth },
+    async (req, reply) => {
+      const input = z
+        .object({
+          kind: z.enum([
+            'GOOD_PICK',
+            'BAD_PICK',
+            'DUPLICATE',
+            'BORING',
+            'WRONG_MOMENT',
+            'TOO_LONG',
+            'TOO_SHORT',
+            'BAD_CROP',
+            'BAD_QUALITY',
+            'BAD_EDIT',
+          ]),
+          note: z.string().trim().max(500).optional(),
+        })
+        .parse(req.body);
+      const short = await db.generatedShort.findFirst({
+        where: { id: req.params.id, userId: req.userId },
+      });
+      if (!short) throw new AppError(404, 'NOT_FOUND', 'Short not found');
+      const feedback = await db.shortFeedback.create({
+        data: { userId: req.userId, shortId: short.id, ...input },
+      });
+      return reply.code(201).send(feedback);
     },
   );
   app.post<{ Params: { id: string } }>(
@@ -638,7 +776,10 @@ export async function buildApp(
         await tx.$queryRaw`SELECT id FROM "SourceVideo" WHERE id = ${req.params.id} AND "userId" = ${req.userId} FOR UPDATE`;
         const source = await tx.sourceVideo.findFirst({
           where: { id: req.params.id, userId: req.userId },
-          include: { analysis: true, _count: { select: { shorts: true } } },
+          include: {
+            analyses: { orderBy: { version: 'desc' }, take: 1 },
+            _count: { select: { shorts: true } },
+          },
         });
         if (!source) throw new AppError(404, 'NOT_FOUND', 'Source not found');
         if (source._count.shorts)
@@ -672,7 +813,7 @@ export async function buildApp(
         await tx.auditLog.create({
           data: { userId: req.userId, action: 'GAME_OVERRIDDEN', resourceId: source.id },
         });
-        if (source.analysis?.status === 'SUCCEEDED') {
+        if (source.analyses[0]?.status === 'SUCCEEDED') {
           const active = await tx.jobRun.findFirst({
             where: {
               sourceId: source.id,
@@ -726,14 +867,15 @@ export async function buildApp(
       return reply.code(202).send(job);
     },
   );
-  app.get('/api/jobs', { preHandler: requireAuth }, async (req) => ({
-    jobs: await db.jobRun.findMany({
+  app.get('/api/jobs', { preHandler: requireAuth }, async (req) => {
+    const jobs = await db.jobRun.findMany({
       where: { source: { userId: req.userId } },
       orderBy: { createdAt: 'desc' },
       take: 100,
       include: { source: { select: { filename: true } } },
-    }),
-  }));
+    });
+    return { jobs: visibleJobs(jobs) };
+  });
   app.get('/api/ops', { preHandler: requireAuth }, async (req) => {
     const [alerts, jobSummary, oldestActiveJob, backupAudit] = await Promise.all([
       db.opsAlert.findMany({

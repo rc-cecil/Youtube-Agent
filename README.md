@@ -2,6 +2,8 @@
 
 A creator workspace for turning uploaded gameplay into measured YouTube Shorts. **Phases 1–9 are implemented**, including the foundation, analysis, AI ranking, Remotion editing/rendering, QC, editorial intelligence, YouTube publishing, analytics, learning, and production hardening. The [master specification](docs/master-specification.md) is the source of truth; the [architecture plan](docs/architecture.md) maps the full product.
 
+The post-testing quality-remediation pipeline adds append-only analysis, game-aware event clustering, adaptive multimodal sampling, variable Short yield, explainable deduplication, EDL v2, confidence-gated tracking, original-source Remotion rendering, centralized HIGH presets, and before/after artifact reporting. See the [quality remediation plan](docs/quality-remediation-plan.md).
+
 ## What works now
 
 - React/TypeScript dashboard, uploads, searchable source library, analysis workspace, Shorts list/detail with shared Remotion preview, job queue, system health and configuration views.
@@ -13,7 +15,7 @@ A creator workspace for turning uploaded gameplay into measured YouTube Shorts. 
 - FC, GTA, Call of Duty, and Fortnite signal adapters with a low-confidence generic fallback; sampled finalist frames; schema-validated 15-dimension highlight scores; audited game overrides that trigger reranking.
 - A pluggable ranking provider: explicitly labeled deterministic mock mode by default, or live OpenAI multimodal analysis when credentials and a model are configured. Content hashes cache unchanged results; token usage and configurable cost estimates are persisted and shown.
 - Three editorial concepts per finalist, truthful hook/title/hashtag planning, content-driven cuts with measured dead-air removal, and immutable schema-validated EDL versions.
-- Reusable 1080×1920 Remotion compositions with six crop strategies, tracked framing data, selective captions, hard cuts, zoom/freeze/replay/overlays, audio ducking, and original-audio preservation.
+- Evidence-based variable Short yield per source, plus reusable 1080×1920 Remotion compositions with six crop strategies, timestamped speech subtitles in OpenAI mode, selective context captions, hard cuts, zoom/freeze/replay/overlays, audio ducking, and original-audio preservation.
 - A dedicated renderer with loudness normalization, full output decode, resolution/duration/audio/boundary/safe-text/rights/metadata QC, private output storage, rerender history, and manual approve/reject controls.
 
 - Daily editorial slates with protected HERO selection, distinct Discovery/Engagement roles, source distribution, global duplicate prevention, frame fingerprints, explicit related-edit exceptions, and a 7/30-day calendar.

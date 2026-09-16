@@ -68,6 +68,12 @@ export type JobView = {
   source?: { filename: string };
 };
 export type AnalysisView = {
+  id: string;
+  version: number;
+  analysisVersion: string;
+  detectorVersion: string;
+  scoringVersion: string;
+  method: 'AI' | 'HEURISTIC_FALLBACK';
   status: string;
   sampleRate: number;
   sceneCount: number;
@@ -92,9 +98,14 @@ export type GameDetectionView = {
   overridden: boolean;
 };
 export type DetectedEventView = {
+  id: string;
   eventType: string;
   confidence: number;
   detectorProfile: string;
+  eventStart: number;
+  keyMoment: number;
+  payoffEnd: number;
+  clusteringPolicy: string;
 };
 export type HighlightScoreView = {
   eventImportance: number;
@@ -104,15 +115,23 @@ export type HighlightScoreView = {
   humor: number;
   tension: number;
   emotionalReaction: number;
+  chaos: number;
+  reactionStrength: number;
   visualClarity: number;
+  storyCompleteness: number;
   contextIndependence: number;
   hookPotential: number;
   retentionPotential: number;
   sharePotential: number;
+  commentPotential: number;
   novelty: number;
   editability: number;
   confidence: number;
   highlightScore: number;
+  shortWorthinessScore: number;
+  decision: string;
+  rejectionReason: string | null;
+  analysisMethod: 'AI' | 'HEURISTIC_FALLBACK';
   reason: string;
   provider: string;
   model: string;
@@ -126,6 +145,16 @@ export type CandidateView = {
   eventType: string;
   signalScore: number;
   reason: string;
+  eventStart: number;
+  payoffEnd: number;
+  durationClass: string;
+  durationReason: string;
+  clusteringPolicy: string;
+  decision: string;
+  rejectionReason: string | null;
+  shortWorthinessScore: number;
+  duplicateScore: number;
+  similarityScore: number;
   score?: HighlightScoreView | null;
   detectedEvent?: DetectedEventView | null;
 };
@@ -150,6 +179,7 @@ export type SourceView = {
   hasAudio: boolean | null;
   container: string | null;
   frameRate: number | null;
+  bitrate: number | null;
   sha256: string;
   rightsAcknowledgedAt: string;
   jobs: JobView[];
@@ -182,6 +212,16 @@ export type ShortSummaryView = {
     state: string;
     progress?: number;
     qc?: Record<string, unknown> | null;
+    bytes?: string | null;
+    width?: number | null;
+    height?: number | null;
+    frameRate?: number | null;
+    bitrate?: number | null;
+    renderPreset?: string;
+    renderVersion?: string;
+    videoCodec?: string | null;
+    audioCodec?: string | null;
+    sourceAssetKind?: string | null;
     job?: JobView;
   }>;
 };

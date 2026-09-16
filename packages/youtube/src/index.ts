@@ -68,7 +68,9 @@ export class YouTubeError extends Error {
 export async function request(url: string, init: RequestInit, transport: typeof fetch = fetch) {
   const response = await transport(url, {
     ...init,
-    redirect: 'error',
+    // Resumable uploads use 308 as a progress response. `error` makes Node's fetch reject that
+    // valid response as an unexpected redirect before the caller can inspect its Range header.
+    redirect: 'manual',
     signal: AbortSignal.timeout(60_000),
   });
   if (!response.ok && response.status !== 308) {

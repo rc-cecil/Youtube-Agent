@@ -1,9 +1,20 @@
 import { z } from 'zod';
 import type { Config } from '../../config/src/index.js';
 
-export const RANKING_PROMPT_VERSION = 'candidate-ranking-v1';
+export const RANKING_PROMPT_VERSION = 'candidate-ranking-v2';
 
 const boundedScore = z.number().int().min(0).max(100);
+export const candidateDecisionSchema = z.enum([
+  'SELECTED',
+  'REJECTED_LOW_INTEREST',
+  'REJECTED_NO_PAYOFF',
+  'REJECTED_DUPLICATE',
+  'REJECTED_TOO_MUCH_CONTEXT',
+  'REJECTED_VISUALLY_WEAK',
+  'REJECTED_LOW_CONFIDENCE',
+  'REJECTED_NO_CLEAR_EVENT',
+  'REJECTED_POOR_SHORT_FORMAT',
+]);
 export const candidateRankingSchema = z.object({
   gameIdentification: z.object({
     game: z.string().min(1).max(100),
@@ -21,15 +32,29 @@ export const candidateRankingSchema = z.object({
       humor: boundedScore,
       tension: boundedScore,
       emotionalReaction: boundedScore,
+      chaos: boundedScore,
+      reactionStrength: boundedScore,
       visualClarity: boundedScore,
+      storyCompleteness: boundedScore,
       contextIndependence: boundedScore,
       hookPotential: boundedScore,
       retentionPotential: boundedScore,
       sharePotential: boundedScore,
+      commentPotential: boundedScore,
       novelty: boundedScore,
       editability: boundedScore,
       confidence: boundedScore,
       highlightScore: boundedScore,
+      shortWorthinessScore: boundedScore,
+      decision: candidateDecisionSchema,
+      rejectionReason: z.string().max(240).nullable(),
+      eventStart: z.number().min(0),
+      keyMoment: z.number().min(0),
+      payoffEnd: z.number().min(0),
+      recommendedStart: z.number().min(0),
+      recommendedEnd: z.number().positive(),
+      durationReason: z.string().min(8).max(300),
+      eventSummary: z.string().min(8).max(300),
       reason: z.string().min(1).max(240),
     }),
   ),
@@ -45,6 +70,13 @@ export type RankingCandidateInput = {
   signalScore: number;
   signalKinds: string[];
   frames: string[];
+  frameTimestamps?: number[];
+  eventStart?: number;
+  payoffEnd?: number;
+  transcript?: string;
+  ocrTimeline?: Array<{ timestamp: number; text: string }>;
+  audioStats?: Record<string, number>;
+  detectorEvidence?: Record<string, unknown>;
 };
 export type RankingInput = {
   inputHash: string;
@@ -109,17 +141,32 @@ export class MockCandidateRankingProvider implements CandidateRankingProvider {
           humor: Math.max(0, base - 20),
           tension: Math.min(100, base + (audio && motion ? 5 : 0)),
           emotionalReaction: Math.min(100, base + (audio ? 8 : -10)),
+          chaos: Math.min(100, base + (motion && audio ? 8 : -12)),
+          reactionStrength: Math.min(100, base + (audio ? 6 : -15)),
           visualClarity: 55,
+          storyCompleteness: 35,
           contextIndependence: 50,
           hookPotential: Math.min(100, base + 2),
           retentionPotential: base,
           sharePotential: Math.max(0, base - 3),
+          commentPotential: Math.max(0, base - 8),
           novelty: 45,
           editability: 70,
           confidence: 35,
           highlightScore: base,
+          shortWorthinessScore: Math.max(0, base - 20),
+          decision: 'REJECTED_LOW_CONFIDENCE',
+          rejectionReason:
+            'Heuristic activity signals cannot establish a publishable gameplay event.',
+          eventStart: candidate.eventStart ?? candidate.startTime,
+          keyMoment: candidate.eventTime,
+          payoffEnd: candidate.payoffEnd ?? candidate.endTime,
+          recommendedStart: candidate.startTime,
+          recommendedEnd: candidate.endTime,
+          durationReason: 'Heuristic boundaries preserve the detected activity cluster.',
+          eventSummary: 'Unverified gameplay activity cluster requiring multimodal review.',
           reason:
-            'Mock-mode ranking derived from measured activity signals; no semantic event claim.',
+            'Heuristic fallback derived from measured activity signals; no semantic event claim.',
         };
       }),
     });
@@ -143,15 +190,20 @@ const scoreProperties = Object.fromEntries(
     'humor',
     'tension',
     'emotionalReaction',
+    'chaos',
+    'reactionStrength',
     'visualClarity',
+    'storyCompleteness',
     'contextIndependence',
     'hookPotential',
     'retentionPotential',
     'sharePotential',
+    'commentPotential',
     'novelty',
     'editability',
     'confidence',
     'highlightScore',
+    'shortWorthinessScore',
   ].map((name) => [name, { type: 'integer', minimum: 0, maximum: 100 }]),
 );
 const rankingJsonSchema = {
@@ -174,11 +226,34 @@ const rankingJsonSchema = {
       items: {
         type: 'object',
         additionalProperties: false,
-        required: ['candidateId', 'eventType', ...Object.keys(scoreProperties), 'reason'],
+        required: [
+          'candidateId',
+          'eventType',
+          ...Object.keys(scoreProperties),
+          'decision',
+          'rejectionReason',
+          'eventStart',
+          'keyMoment',
+          'payoffEnd',
+          'recommendedStart',
+          'recommendedEnd',
+          'durationReason',
+          'eventSummary',
+          'reason',
+        ],
         properties: {
           candidateId: { type: 'string' },
           eventType: { type: 'string' },
           ...scoreProperties,
+          decision: { type: 'string', enum: candidateDecisionSchema.options },
+          rejectionReason: { type: ['string', 'null'] },
+          eventStart: { type: 'number', minimum: 0 },
+          keyMoment: { type: 'number', minimum: 0 },
+          payoffEnd: { type: 'number', minimum: 0 },
+          recommendedStart: { type: 'number', minimum: 0 },
+          recommendedEnd: { type: 'number', exclusiveMinimum: 0 },
+          durationReason: { type: 'string' },
+          eventSummary: { type: 'string' },
           reason: { type: 'string' },
         },
       },
@@ -228,14 +303,19 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
           candidates: input.candidates.map(({ frames: _frames, ...candidate }) => candidate),
           analysisFocus:
             detectorGuidance[input.detectorProfile] ?? detectorGuidance['generic-gameplay-v1'],
-          task: 'Read visible HUD, scoreboard, kill-feed, clock, status, and other OCR-readable interface text where present. Identify the game if visually supported, classify each candidate event conservatively, score every requested dimension, and give one concise evidence-based reason. Return one ranking per candidate ID. Do not invent events that are not visible.',
+          task: 'Use the ordered adaptive frames, their timestamps, transcript, OCR timeline, audio statistics, and detector evidence to reconstruct setup, action, and payoff. Identify the game only when supported. Decide whether each event genuinely deserves a Short; rejection is preferred to weak content. Return event anchors, content-driven boundaries, all scores, an explicit decision, and concise evidence-based summaries. Do not invent events or hidden reasoning.',
         }),
       },
     ];
     for (const candidate of input.candidates) {
       content.push({ type: 'input_text', text: `Frames for candidate ${candidate.id}:` });
-      for (const imageUrl of candidate.frames)
-        content.push({ type: 'input_image', image_url: imageUrl, detail: 'low' });
+      for (let index = 0; index < candidate.frames.length; index++) {
+        content.push({
+          type: 'input_text',
+          text: `Candidate ${candidate.id} frame at ${candidate.frameTimestamps?.[index]?.toFixed(3) ?? 'unknown'}s`,
+        });
+        content.push({ type: 'input_image', image_url: candidate.frames[index], detail: 'high' });
+      }
     }
     let response: Response;
     try {
@@ -328,12 +408,12 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
 }
 
 export function createCandidateRankingProvider(config: Config): CandidateRankingProvider {
-  return config.AI_MODE === 'openai'
+  return config.AI_MODE === 'openai' && config.OPENAI_API_KEY && config.AI_VISION_MODEL
     ? new OpenAICandidateRankingProvider(config)
     : new MockCandidateRankingProvider();
 }
 
-export const SHORT_PLANNING_PROMPT_VERSION = 'short-planning-v1';
+export const SHORT_PLANNING_PROMPT_VERSION = 'short-planning-v3';
 const conceptSchema = z.object({
   key: z.enum(['ACTION_FIRST', 'TENSION_FIRST', 'CONTEXT_FIRST']),
   concept: z.string().trim().min(1).max(160),
@@ -341,6 +421,15 @@ const conceptSchema = z.object({
   rationale: z.string().trim().min(1).max(240),
   titleCandidates: z.array(z.string().trim().min(1).max(100)).length(3),
   description: z.string().trim().max(500),
+  captionBeats: z
+    .array(
+      z.object({
+        text: z.string().trim().min(1).max(64),
+        timing: z.enum(['SETUP', 'EVENT', 'PAYOFF']),
+        emphasis: z.array(z.string().trim().min(1).max(24)).max(3),
+      }),
+    )
+    .max(3),
   hashtags: z
     .array(
       z
@@ -371,6 +460,8 @@ export type ShortPlanningInput = {
   game: string;
   eventType: string;
   sourceDuration: number;
+  sourceWidth?: number;
+  sourceHeight?: number;
   startTime: number;
   eventTime: number;
   endTime: number;
@@ -381,6 +472,20 @@ export type ShortPlanningInput = {
   visualClarity: number;
   preferredHashtags: string[];
   bannedHashtags: string[];
+  transcript: string;
+  editorialSignals: {
+    excitement: number;
+    surprise: number;
+    skill: number;
+    humor: number;
+    tension: number;
+    emotionalReaction: number;
+    hookPotential: number;
+    retentionPotential: number;
+    sharePotential: number;
+    novelty: number;
+    editability: number;
+  };
 };
 export type ShortPlanningResult = {
   output: ShortPlanningOutput;
@@ -403,25 +508,77 @@ function truthfulLabel(eventType: string) {
   const normalized = eventType.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
   return (normalized || 'GAMEPLAY MOMENT').slice(0, 48).toUpperCase();
 }
+function readableEvent(eventType: string) {
+  return eventType
+    .replace(/^(COD|FC|GTA|FORTNITE)[_-]+/i, '')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function mockEditorialCopy(game: string, event: string) {
+  const normalized = event.toLowerCase(),
+    shortGame = /call of duty/i.test(game) ? 'COD' : game;
+  if (normalized.includes('activity'))
+    return {
+      titles: [`${shortGame} Got Intense`, 'The Pace Spiked Here', 'Watch This Moment Build'],
+      caption: 'THE PACE SPIKED',
+      description: `A measured burst of action from ${game}, cut around the strongest activity peak.`,
+    };
+  if (normalized.includes('transition') || normalized.includes('round'))
+    return {
+      titles: ['The Round Changed Here', `A Sudden ${shortGame} Turn`, 'Watch the Shift'],
+      caption: 'THE ROUND SHIFTS',
+      description: `A sharp ${game} transition, trimmed to the moment the play changes direction.`,
+    };
+  if (normalized.includes('win') || normalized.includes('victory'))
+    return {
+      titles: ['That Sealed the Win', `${shortGame} Victory Moment`, 'The Finish Was Worth It'],
+      caption: 'THAT SEALED IT',
+      description: `The decisive ${event.toLowerCase()} from this ${game} session.`,
+    };
+  if (normalized.includes('clutch'))
+    return {
+      titles: ['The Clutch Actually Worked', `${shortGame} Clutch Moment`, 'No Room for Error'],
+      caption: 'NO ROOM FOR ERROR',
+      description: `A high-pressure ${game} clutch, cut tightly around the payoff.`,
+    };
+  return {
+    titles: [event, `${shortGame}: ${event}`, `Watch This ${event}`],
+    caption: event.toUpperCase(),
+    description: `A focused ${event.toLowerCase()} moment from ${game}.`,
+  };
+}
 export class MockShortPlanningProvider implements ShortPlanningProvider {
   readonly name = 'mock';
   readonly model = 'deterministic-short-planner-v1';
   async plan(input: ShortPlanningInput): Promise<ShortPlanningResult> {
-    const hook = truthfulLabel(input.eventType),
+    const event = readableEvent(input.eventType) || 'Gameplay Moment',
+      hook = truthfulLabel(event),
       gameTag = cleanTag(input.game),
       tags = [...new Set([gameTag, '#gaming', '#shorts', ...input.preferredHashtags])]
         .filter((tag) => tag.length > 1 && !input.bannedHashtags.includes(tag))
         .slice(0, 6),
-      titleBase = hook.length <= 32 ? hook : 'GAMEPLAY TURNING POINT',
+      conciseEvent = event.length <= 30 ? event : 'The Turning Point',
+      copy = mockEditorialCopy(input.game, conciseEvent),
       shared = {
         hook,
-        titleCandidates: [titleBase, `${titleBase} HIGHLIGHT`, 'THE GAMEPLAY TURNED HERE'],
-        description: `${input.game}: ${input.eventType}.`,
+        titleCandidates: copy.titles.map((title) => title.slice(0, 60)),
+        description: copy.description,
+        captionBeats: [{ text: copy.caption, timing: 'EVENT' as const, emphasis: [] }],
         hashtags: tags.length ? tags : ['#gaming', '#shorts'],
-        cropStrategy: 'BACKGROUND_BLUR' as const,
+        cropStrategy:
+          (input.sourceWidth ?? 1920) / (input.sourceHeight ?? 1080) > 1.15
+            ? ('SMART_CROP' as const)
+            : ('CENTER' as const),
       };
     const output = shortPlanningSchema.parse({
-      selectedKey: input.contextIndependence >= 55 ? 'ACTION_FIRST' : 'CONTEXT_FIRST',
+      selectedKey:
+        input.contextIndependence >= 60
+          ? 'ACTION_FIRST'
+          : input.editorialSignals.tension >= 60
+            ? 'TENSION_FIRST'
+            : 'CONTEXT_FIRST',
       concepts: [
         {
           key: 'ACTION_FIRST',
@@ -476,6 +633,7 @@ const conceptJsonSchema = {
           'rationale',
           'titleCandidates',
           'description',
+          'captionBeats',
           'hashtags',
           'cropStrategy',
           'effectPreset',
@@ -487,6 +645,21 @@ const conceptJsonSchema = {
           rationale: { type: 'string' },
           titleCandidates: { type: 'array', minItems: 3, maxItems: 3, items: { type: 'string' } },
           description: { type: 'string' },
+          captionBeats: {
+            type: 'array',
+            minItems: 0,
+            maxItems: 3,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              required: ['text', 'timing', 'emphasis'],
+              properties: {
+                text: { type: 'string' },
+                timing: { type: 'string', enum: ['SETUP', 'EVENT', 'PAYOFF'] },
+                emphasis: { type: 'array', maxItems: 3, items: { type: 'string' } },
+              },
+            },
+          },
           hashtags: {
             type: 'array',
             minItems: 1,
@@ -542,7 +715,7 @@ export class OpenAIShortPlanningProvider implements ShortPlanningProvider {
           safety_identifier: input.ownerHash,
           prompt_cache_key: input.inputHash,
           instructions:
-            'You are a conservative gameplay Shorts editor. Return structured editorial choices only. Hooks and titles must be short, accurate, and supported by the supplied evidence. Never invent dialogue or events. Use captions only when a transcript is supplied; none is supplied here.',
+            'You are a sharp but conservative gameplay Shorts editor. Return structured editorial choices only. Use the event evidence, score profile, and supplied transcript when present. Write three distinct, natural, curiosity-oriented titles under 60 characters and one plain-language description sentence. Never expose detector labels, snake case, generic SEO filler, invented dialogue, or unsupported events. captionBeats are optional editorial context cards, never fake speech: use at most three only when they clarify setup, event, or payoff. Match edit intensity to the evidence: use clean cuts for readable story beats, punch-ins for clear impact, and replay only when the payoff is visually worth repeating.',
           input: [
             {
               role: 'user',
@@ -553,7 +726,7 @@ export class OpenAIShortPlanningProvider implements ShortPlanningProvider {
                     ...input,
                     inputHash: undefined,
                     ownerHash: undefined,
-                    task: 'Create three genuinely distinct concepts, select the strongest, choose a crop that preserves landscape HUD information, and use only a few relevant non-banned hashtags.',
+                    task: 'Create three genuinely distinct concepts, select the strongest, choose a crop that preserves the action and essential HUD. Prefer SMART_CROP or CENTER when safe; use BACKGROUND_BLUR only when cropping would remove critical information. Use only a few relevant non-banned hashtags.',
                   }),
                 },
               ],
@@ -635,7 +808,69 @@ export class OpenAIShortPlanningProvider implements ShortPlanningProvider {
 }
 
 export function createShortPlanningProvider(config: Config): ShortPlanningProvider {
-  return config.AI_MODE === 'openai'
+  return config.AI_MODE === 'openai' &&
+    config.OPENAI_API_KEY &&
+    (config.AI_REASONING_MODEL || config.AI_VISION_MODEL)
     ? new OpenAIShortPlanningProvider(config)
     : new MockShortPlanningProvider();
+}
+
+const transcriptionSchema = z.object({
+  text: z.string(),
+  words: z
+    .array(
+      z.object({
+        word: z.string(),
+        start: z.number().min(0),
+        end: z.number().min(0),
+      }),
+    )
+    .default([]),
+});
+export type TranscriptWord = z.infer<typeof transcriptionSchema>['words'][number];
+
+export async function transcribeAudioClip(
+  config: Config,
+  audio: Uint8Array,
+  fetcher: Fetcher = fetch,
+) {
+  if (config.AI_MODE !== 'openai' || !config.OPENAI_API_KEY) return { text: '', words: [] };
+  const form = new FormData();
+  form.append('file', new Blob([Uint8Array.from(audio)], { type: 'audio/wav' }), 'clip.wav');
+  form.append('model', config.AI_TRANSCRIPTION_MODEL);
+  form.append('response_format', 'verbose_json');
+  form.append('timestamp_granularities[]', 'word');
+  let response: Response;
+  try {
+    response = await fetcher('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${config.OPENAI_API_KEY}` },
+      body: form,
+      signal: AbortSignal.timeout(config.AI_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new AIProviderError(
+      'AI_TRANSCRIPTION_UNAVAILABLE',
+      error instanceof Error && error.name === 'TimeoutError'
+        ? 'OpenAI transcription timed out.'
+        : 'OpenAI transcription could not be reached.',
+    );
+  }
+  if (!response.ok)
+    throw new AIProviderError(
+      response.status === 429 || response.status >= 500
+        ? 'AI_TRANSCRIPTION_UNAVAILABLE'
+        : 'AI_TRANSCRIPTION_REJECTED',
+      response.status === 429 || response.status >= 500
+        ? 'OpenAI transcription is temporarily unavailable.'
+        : 'OpenAI rejected the transcription request. Check the configured transcription model.',
+      response.status < 500 && response.status !== 429,
+    );
+  const parsed = transcriptionSchema.safeParse(await response.json());
+  if (!parsed.success)
+    throw new AIProviderError(
+      'AI_INVALID_TRANSCRIPTION',
+      'OpenAI transcription did not contain valid timestamped words.',
+    );
+  return parsed.data;
 }

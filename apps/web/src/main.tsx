@@ -104,11 +104,15 @@ const scoreDimensions: Array<[keyof HighlightScoreView, string]> = [
   ['humor', 'Humor'],
   ['tension', 'Tension'],
   ['emotionalReaction', 'Reaction'],
+  ['chaos', 'Chaos'],
+  ['reactionStrength', 'Reaction strength'],
   ['visualClarity', 'Clarity'],
+  ['storyCompleteness', 'Story'],
   ['contextIndependence', 'Standalone'],
   ['hookPotential', 'Hook'],
   ['retentionPotential', 'Retention'],
   ['sharePotential', 'Shareability'],
+  ['commentPotential', 'Comments'],
   ['novelty', 'Novelty'],
   ['editability', 'Editability'],
   ['confidence', 'Confidence'],
@@ -839,8 +843,14 @@ function SourceDetail() {
                 className="button primary"
                 onClick={() => void createShorts()}
               >
-                <WandSparkles size={16} /> Create Shorts
+                <WandSparkles size={16} /> Create qualified Shorts
               </button>
+            )}
+            {data.candidates?.some((candidate) => candidate.score) && !data.shorts?.length && (
+              <span className="muted">
+                The system decides the final count from highlight strength, clarity, confidence,
+                editability, and overlap.
+              </span>
             )}
           </div>
           <section className="panel metadata">
@@ -858,6 +868,10 @@ function SourceDetail() {
               ],
               ['File size', bytes(data.bytes)],
               ['Frame rate', data.frameRate ? `${data.frameRate.toFixed(2)} fps` : 'Pending'],
+              [
+                'Bitrate',
+                data.bitrate ? `${(data.bitrate / 1_000_000).toFixed(2)} Mbps` : 'Pending',
+              ],
               ['Uploaded', new Date(data.createdAt).toLocaleString()],
               [
                 'Publishing rights',
@@ -887,6 +901,10 @@ function SourceDetail() {
               <div className="panel analysis-summary">
                 <div className="panel-heading">
                   <h2>Signal summary</h2>
+                  <span className="muted">
+                    Version {data.analysis.version} ·{' '}
+                    {data.analysis.method === 'AI' ? 'AI evaluated' : 'Heuristic fallback'}
+                  </span>
                 </div>
                 <div className="signal-grid">
                   <span>
@@ -956,8 +974,10 @@ function SourceDetail() {
           {data.analysis?.status === 'SUCCEEDED' && data.candidates && (
             <section className="panel">
               <div className="panel-heading">
-                <h2>Candidate moments</h2>
-                <span className="muted">Ranked finalists include 15 explainable dimensions</span>
+                <h2>Ranked candidate workspace</h2>
+                <span className="muted">
+                  Every finalist remains inspectable, including rejections
+                </span>
               </div>
               {data.candidates.length ? (
                 <div className="candidate-list">
@@ -969,23 +989,46 @@ function SourceDetail() {
                     )
                     .map((candidate) => (
                       <div className="candidate-row" key={candidate.id}>
-                        <span className="candidate-play">
-                          <Play size={16} />
-                        </span>
+                        <video
+                          className="candidate-video"
+                          controls
+                          preload="metadata"
+                          aria-label={`Preview ${eventLabel(candidate.eventType)}`}
+                          src={`/api/sources/${data.id}/assets/proxy#t=${Math.max(0, candidate.startTime)},${candidate.endTime}`}
+                        />
                         <div>
                           <strong>{eventLabel(candidate.eventType)}</strong>
                           <small>
                             {duration(candidate.startTime)}–{duration(candidate.endTime)} · event at{' '}
-                            {duration(candidate.eventTime)}
+                            {duration(candidate.eventTime)} · {candidate.durationClass}
                           </small>
                           <p>{candidate.score?.reason ?? candidate.reason}</p>
+                          <div className="candidate-decisions">
+                            <Badge state={candidate.decision} />
+                            <span>
+                              Worthiness{' '}
+                              {candidate.score?.shortWorthinessScore ??
+                                candidate.shortWorthinessScore}
+                            </span>
+                            <span>
+                              Duplicate risk {Math.round(candidate.duplicateScore * 100)}%
+                            </span>
+                            <span>
+                              {candidate.score?.analysisMethod === 'AI'
+                                ? 'OpenAI multimodal'
+                                : 'Heuristic fallback · draft only'}
+                            </span>
+                          </div>
+                          {candidate.rejectionReason && (
+                            <p className="candidate-rejection">{candidate.rejectionReason}</p>
+                          )}
                           {candidate.score && (
                             <details className="score-details">
                               <summary>
                                 Score breakdown ·{' '}
                                 {candidate.score.provider === 'openai'
                                   ? candidate.score.model
-                                  : 'mock fixture'}
+                                  : 'heuristic fallback'}
                                 {candidate.score.cached ? ' · cached' : ''}
                               </summary>
                               <div className="score-grid">
@@ -1070,6 +1113,7 @@ type ShortDetailView = Omit<ShortSummaryView, 'source' | 'renders'> & {
     filename: string;
     width: number;
     height: number;
+    frameRate: number | null;
     hasAudio: boolean;
     rightsAcknowledgedAt: string;
   };
@@ -1095,11 +1139,22 @@ type ShortDetailView = Omit<ShortSummaryView, 'source' | 'renders'> & {
     document: EditDecisionList;
     validatedAt: string;
   }>;
+  feedback: Array<{ id: string; kind: string; note: string | null; createdAt: string }>;
   renders: Array<{
     id: string;
     state: string;
     qc: Record<string, unknown> | null;
     errorMessage: string | null;
+    bytes: string | null;
+    width: number | null;
+    height: number | null;
+    frameRate: number | null;
+    bitrate: number | null;
+    renderPreset: string;
+    renderVersion: string;
+    videoCodec: string | null;
+    audioCodec: string | null;
+    sourceAssetKind: string | null;
     job: JobView;
   }>;
 };
@@ -1171,7 +1226,8 @@ function ShortDetail() {
     [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(''),
     [description, setDescription] = useState(''),
-    [hashtags, setHashtags] = useState('');
+    [hashtags, setHashtags] = useState(''),
+    [renderPreset, setRenderPreset] = useState('HIGH');
   useEffect(() => {
     if (data) {
       setTitle(data.title);
@@ -1212,6 +1268,21 @@ function ShortDetail() {
       setBusy(false);
     }
   }
+  async function saveEdl(document: EditDecisionList) {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api(`/shorts/${id}/edl`, {
+        method: 'PATCH',
+        body: JSON.stringify({ document }),
+      });
+      await refresh();
+    } catch (e) {
+      setActionError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  }
   const plan = data?.editPlans[0],
     edl = plan?.document,
     latestRender = data?.renders[0];
@@ -1234,10 +1305,21 @@ function ShortDetail() {
             <button
               className="button secondary"
               disabled={busy || ['RENDERING', 'QC'].includes(data.state)}
-              onClick={() => void action(`/shorts/${id}/render`)}
+              onClick={() => void action(`/shorts/${id}/render`, { preset: renderPreset })}
             >
               <RefreshCw size={16} /> Re-render
             </button>
+            <select
+              aria-label="Render quality preset"
+              value={renderPreset}
+              disabled={busy}
+              onChange={(event) => setRenderPreset(event.target.value)}
+              title="Choose preview speed or final YouTube quality"
+            >
+              <option value="PREVIEW">Preview</option>
+              <option value="STANDARD">Standard</option>
+              <option value="HIGH">High · YouTube</option>
+            </select>
             <button
               className="button secondary"
               disabled={busy}
@@ -1294,6 +1376,104 @@ function ShortDetail() {
               </div>
             </form>
           )}
+          <section className="panel composition-controls">
+            <div className="panel-heading">
+              <h2>Composition controls</h2>
+              <span className="muted">Each change creates a validated EDL revision</span>
+            </div>
+            <div className="detail-actions">
+              <button
+                className="button secondary"
+                disabled={busy || !edl.hook || edl.titleCandidates.length < 2}
+                title="Try the next pre-generated hook concept"
+                onClick={() => {
+                  if (!edl.hook) return;
+                  const current = edl.titleCandidates.indexOf(edl.hook.text);
+                  const text = edl.titleCandidates[(current + 1) % edl.titleCandidates.length]!;
+                  void saveEdl({ ...edl, hook: { ...edl.hook, text } });
+                }}
+              >
+                Try next hook
+              </button>
+              <select
+                aria-label="Change crop strategy"
+                value={edl.cropStrategy}
+                disabled={busy}
+                title="Choose how landscape gameplay fits the vertical frame"
+                onChange={(event) => {
+                  const cropStrategy = event.target.value as EditDecisionList['cropStrategy'];
+                  void saveEdl({
+                    ...edl,
+                    cropStrategy: cropStrategy === 'TRACKED_CROP' ? 'SMART_CROP' : cropStrategy,
+                    trackedSubject: [],
+                    trackingConfidence: 0,
+                  });
+                }}
+              >
+                <option value="CENTER_CROP">Center crop</option>
+                <option value="SMART_CROP">Smart crop</option>
+                <option value="BLURRED_BACKGROUND">Full gameplay</option>
+                <option value="STACKED">Stacked</option>
+              </select>
+              <button
+                className="button secondary"
+                disabled={busy || !edl.captions.length}
+                title="Remove alternate caption pages"
+                onClick={() =>
+                  void saveEdl({
+                    ...edl,
+                    captions: edl.captions.filter((_caption, index) => index % 2 === 0),
+                  })
+                }
+              >
+                Reduce captions
+              </button>
+              <button
+                className="button secondary"
+                disabled={busy}
+                title="Reduce optional zooms, overlays, and sound effects"
+                onClick={() =>
+                  void saveEdl({
+                    ...edl,
+                    editingIntensity: 'LOW',
+                    zooms: [],
+                    soundEffects: [],
+                    overlays: edl.overlays.filter((overlay) => overlay.type === 'PROGRESS'),
+                  })
+                }
+              >
+                Reduce editing
+              </button>
+              <button
+                className="button secondary"
+                disabled={busy}
+                title="Add a restrained key-moment punch-in"
+                onClick={() => {
+                  const keyTime = Math.max(
+                    0,
+                    Math.min(edl.outputDuration - 0.5, edl.eventAnchors.keyMoment - edl.clipStart),
+                  );
+                  void saveEdl({
+                    ...edl,
+                    editingIntensity: 'HIGH',
+                    zooms: [
+                      ...edl.zooms,
+                      {
+                        start: Math.max(0, keyTime - 0.25),
+                        end: Math.min(edl.outputDuration, keyTime + 0.55),
+                        scale: 1.12,
+                        focusX: 0.5,
+                        focusY: 0.5,
+                        reason: 'Manual emphasis on the key moment',
+                      },
+                    ].slice(-20),
+                  });
+                }}
+              >
+                Increase editing
+              </button>
+            </div>
+          </section>
           <div className="short-detail-grid">
             <section className="panel player-panel">
               <div className="panel-heading">
@@ -1307,6 +1487,7 @@ function ShortDetail() {
                     sourceWidth={data.source.width}
                     sourceHeight={data.source.height}
                     hasAudio={data.source.hasAudio}
+                    renderFps={Math.min(60, data.source.frameRate ?? 30)}
                     edl={edl}
                   />
                 </React.Suspense>
@@ -1363,6 +1544,39 @@ function ShortDetail() {
           <ShortAnalyticsSummary shortId={data.id} />
           <section className="panel">
             <div className="panel-heading">
+              <h2>Editor feedback</h2>
+              <span className="muted">Stored for future ranking calibration</span>
+            </div>
+            <div className="feedback-actions">
+              {[
+                'GOOD_PICK',
+                'BAD_PICK',
+                'DUPLICATE',
+                'BORING',
+                'WRONG_MOMENT',
+                'TOO_LONG',
+                'TOO_SHORT',
+                'BAD_CROP',
+                'BAD_QUALITY',
+                'BAD_EDIT',
+              ].map((kind) => (
+                <button
+                  key={kind}
+                  className="button secondary"
+                  disabled={busy}
+                  title={`Record ${eventLabel(kind).toLowerCase()} feedback`}
+                  onClick={() => void action(`/shorts/${id}/feedback`, { kind })}
+                >
+                  {eventLabel(kind)}
+                </button>
+              ))}
+            </div>
+            {data.feedback.length > 0 && (
+              <p className="muted">Latest: {eventLabel(data.feedback[0]!.kind)}</p>
+            )}
+          </section>
+          <section className="panel">
+            <div className="panel-heading">
               <h2>Concept alternatives</h2>
               <span className="muted">One highlight, three editorial approaches</span>
             </div>
@@ -1401,7 +1615,7 @@ function ShortDetail() {
                     <small>
                       {render.errorMessage ??
                         (render.qc
-                          ? 'Playable, 1080×1920, duration, audio, boundaries, safe text, rights, and metadata passed.'
+                          ? `${render.renderPreset} · ${render.width}×${render.height} · ${render.frameRate?.toFixed(2)} fps · ${render.bitrate ? `${(render.bitrate / 1_000_000).toFixed(2)} Mbps` : 'bitrate pending'} · ${render.sourceAssetKind ?? 'source pending'} · QC passed.`
                           : 'Waiting for renderer')}
                     </small>
                   </div>
@@ -2004,6 +2218,25 @@ function App() {
     return () => {
       window.removeEventListener('keydown', keyboard);
       window.removeEventListener('pointerdown', pointer);
+    };
+  }, []);
+  useEffect(() => {
+    const addTooltip = (event: Event) => {
+      if (!(event.target instanceof Element)) return;
+      const control = event.target.closest<HTMLElement>(
+        'button, a, [role="button"], input, select, textarea',
+      );
+      if (!control || control.title) return;
+      const explicit = control.getAttribute('aria-label') ?? control.dataset.tooltip,
+        visibleText = control.textContent?.replace(/\s+/g, ' ').trim(),
+        hint = (explicit || visibleText || '').slice(0, 120);
+      if (hint) control.title = hint;
+    };
+    document.addEventListener('pointerover', addTooltip, true);
+    document.addEventListener('focusin', addTooltip, true);
+    return () => {
+      document.removeEventListener('pointerover', addTooltip, true);
+      document.removeEventListener('focusin', addTooltip, true);
     };
   }, []);
   useEffect(() => {

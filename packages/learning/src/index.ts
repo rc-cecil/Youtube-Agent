@@ -70,11 +70,12 @@ export type FeatureValues = {
 type EdlLike = {
   outputDuration: number;
   cropStrategy: string;
-  hook: { text: string; start: number };
+  hook: { text: string; start: number } | null;
   cuts: Array<{ speed: number }>;
   zooms: unknown[];
   freezeFrames: unknown[];
   replay: unknown | null;
+  replays?: unknown[];
   captions: Array<{ text: string; start: number; end: number }>;
   overlays: unknown[];
   audioInstructions: {
@@ -127,7 +128,7 @@ export function extractFeature(input: {
     input.edl.zooms.length +
     input.edl.freezeFrames.length * 2 +
     input.edl.overlays.length +
-    (input.edl.replay ? 2 : 0);
+    (input.edl.replays?.length ?? (input.edl.replay ? 1 : 0)) * 2;
   const actionsPerTenSeconds = (editActions / Math.max(1, input.edl.outputDuration)) * 10;
   return {
     game: input.game,
@@ -136,7 +137,7 @@ export function extractFeature(input: {
     durationBucket: durationBucket(input.duration),
     postingTime: `${read('hour')}:${read('minute')}`,
     dayOfWeek: read('weekday'),
-    hookType: hookType(input.edl.hook.text),
+    hookType: input.edl.hook ? hookType(input.edl.hook.text) : 'ACTION_FIRST',
     openingFrameStyle: input.edl.cropStrategy === 'GAMEPLAY_PLUS_FACE_CAM' ? 'FACECAM' : 'ACTION',
     captionStyle: !input.edl.captions.length
       ? 'NONE'

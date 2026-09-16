@@ -6,6 +6,9 @@ export const gameplayShortPropsSchema = z.object({
   sourceWidth: z.number().int().positive(),
   sourceHeight: z.number().int().positive(),
   hasAudio: z.boolean(),
+  outputWidth: z.number().int().positive().default(1080),
+  outputHeight: z.number().int().positive().default(1920),
+  renderFps: z.number().positive().max(60).default(30),
   edl: editDecisionListSchema,
   debug: z.boolean().default(false),
 });

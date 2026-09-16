@@ -53,15 +53,16 @@ BullMQ's documented [job IDs](https://docs.bullmq.io/guide/jobs/job-ids), [idemp
 | `RENDER_TIMEOUT_MS`                                    | Per-render/normalization ceiling                |
 | `REMOTION_BROWSER_EXECUTABLE`                          | Optional compatible Chromium executable         |
 | `ANALYSIS_FPS`                                         | Grayscale activity samples/sec, default one     |
-| `ANALYSIS_CANDIDATE_LIMIT`                             | Maximum generic windows/source, default 12      |
+| `ANALYSIS_CANDIDATE_LIMIT`                             | Maximum generic windows/source, default 24      |
 | `PROXY_MAX_WIDTH`                                      | Review proxy maximum width, default 720         |
 | `AI_MODE`                                              | `mock` (default) or `openai` ranking provider   |
-| `AI_FINALIST_LIMIT`                                    | Candidates sampled per source, default six      |
-| `SHORTS_PER_SOURCE_LIMIT`                              | Planned finalists/source, default three         |
+| `AI_FINALIST_LIMIT`                                    | Candidates sampled per source, default 24       |
+| `SHORTS_PER_SOURCE_LIMIT`                              | Safety ceiling/source, default 24; yield varies |
 | `AI_TIMEOUT_MS`                                        | Ranking request timeout, default 120 seconds    |
 | `OPENAI_API_KEY`                                       | Required server secret for `AI_MODE=openai`     |
 | `AI_VISION_MODEL`                                      | Required model name for `AI_MODE=openai`        |
 | `AI_REASONING_MODEL`                                   | Optional Short-planning model; vision fallback  |
+| `AI_TRANSCRIPTION_MODEL`                               | Timestamped subtitle model, default `whisper-1` |
 | `AI_INPUT_USD_PER_1M`, `AI_OUTPUT_USD_PER_1M`          | Optional explicit cost-estimate rates           |
 | `SESSION_HOURS`                                        | Session lifetime, default 24 hours              |
 | `TIMEZONE`                                             | Validated IANA zone, default Africa/Accra       |
@@ -96,9 +97,11 @@ Use **Sync now** for an operator-triggered refresh; the API limits this to four 
 
 **FFmpeg or storage unavailable:** retryable failures create FailureEvents and RETRYING state with exponential backoff. After three attempts, the source fails. Correct configuration and use Retry processing; the API restarts the failed stage.
 
-**Analysis recovery:** ingestion commits a separate PENDING analysis intent and moves the source to ANALYZING. Reconciliation also backfills previously validated Phase 1 sources. Reanalysis is serialized, replaces derived signals/candidates, and preserves a user-corrected game. Deterministic proxy keys make storage retries idempotent.
+**Analysis recovery:** ingestion commits a separate PENDING analysis intent and moves the source to ANALYZING. Reconciliation also backfills previously validated Phase 1 sources. Reanalysis is serialized and append-only: it creates a new `VideoAnalysis` version, retains prior evidence/artifacts, archives prior active Shorts, and preserves a user-corrected game. Deterministic proxy keys make storage retries idempotent.
 
-**Ranking recovery:** successful local analysis commits a separate PENDING `RANK` intent and stays ANALYZING until ranking succeeds. Reconciliation backfills Phase 2 analyses that never received a successful rank. Ranking samples only the configured finalists, validates strict structured output, and persists event evidence and all score dimensions atomically before READY. A failed rank retries only ranking, not ingestion or signal extraction. Manual game correction schedules a fresh rank with the selected adapter.
+**Ranking recovery:** successful local analysis commits a separate PENDING `RANK` intent and stays ANALYZING until ranking succeeds. Reconciliation backfills analyses that never received a successful rank. Ranking uses adaptive temporal samples plus OCR, transcript, audio, detector, tracking, and perceptual evidence; validates strict structured output; and persists explicit decisions and all score dimensions atomically before READY. A failed rank retries only ranking, not ingestion or signal extraction. Manual game correction schedules a fresh rank with the selected adapter. Without a real OpenAI key, the development fallback is non-publishable and must never be represented as AI output.
+
+**Quality-remediation acceptance:** capture the immutable EA Sports FC baseline with `npm run report:quality -- --snapshot` before reprocessing. After a real OpenAI reprocess and HIGH renders, run `npm run report:quality` and manually watch every artifact listed in `docs/quality-remediation-report.md`. Do not publish acceptance outputs; automated metrics and QC are necessary but not sufficient.
 
 **Planning recovery:** ranked sources without generated Shorts receive a durable `PLAN` intent. Planning caches owner-bound provider output, persists three alternatives, selects one, removes only measured interior dead air, and validates the complete EDL before creating render work. It never invents transcript captions. A failed plan does not invalidate the source or discard ranked evidence.
 
