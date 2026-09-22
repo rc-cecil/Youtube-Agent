@@ -427,6 +427,7 @@ function Uploads() {
   const { data: config } = useData<{ maxUploadBytes: number }>('/config');
   const { data, error: listError, refresh } = useData<{ uploads: UploadView[] }>('/uploads');
   const [file, setFile] = useState<File | null>(null),
+    [contentType, setContentType] = useState<'AUTO' | 'GAMEPLAY' | 'PODCAST'>('AUTO'),
     [rights, setRights] = useState(false),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -449,6 +450,7 @@ function Uploads() {
             filename: file.name,
             bytes: file.size,
             mimeType,
+            contentType,
             rightsAcknowledged: true,
           });
       setResumeId(upload.id);
@@ -517,7 +519,7 @@ function Uploads() {
     <>
       <PageTitle
         eyebrow="SOURCE FOOTAGE"
-        title="Upload gameplay"
+        title="Upload a recording"
         description="Your originals, safely stored and ready for what comes next."
       />
       <ErrorBox message={error || listError} />
@@ -544,7 +546,7 @@ function Uploads() {
               {config ? bytes(config.maxUploadBytes) : 'your configured limit'}
             </small>
             <input
-              aria-label="Choose gameplay video"
+              aria-label="Choose video recording"
               type="file"
               accept=".mp4,.mov,.webm"
               disabled={busy}
@@ -553,6 +555,18 @@ function Uploads() {
                 setProgress(0);
               }}
             />
+          </label>
+          <label>
+            Content type
+            <select
+              value={contentType}
+              disabled={busy || Boolean(resumeId)}
+              onChange={(e) => setContentType(e.target.value as 'AUTO' | 'GAMEPLAY' | 'PODCAST')}
+            >
+              <option value="AUTO">Auto-detect (defaults to gameplay when uncertain)</option>
+              <option value="GAMEPLAY">Gameplay</option>
+              <option value="PODCAST">Podcast or conversation</option>
+            </select>
           </label>
           <label className="checkbox">
             <input

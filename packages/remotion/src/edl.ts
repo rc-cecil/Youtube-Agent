@@ -257,6 +257,8 @@ function migrateLegacy(value: unknown) {
     (value as { schemaVersion?: number }).schemaVersion !== 1
   )
     return value;
+  // Legacy documents are untyped; the v2 schema validates the migrated result below.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const old = value as Record<string, any>;
   const strategy =
     old.cropStrategy === 'CENTER'

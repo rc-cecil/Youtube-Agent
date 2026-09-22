@@ -1,7 +1,10 @@
 import { z } from 'zod';
 import type { Config } from '../../config/src/index.js';
+import { modelForStage } from './model-router.js';
+import type { DiscoveryOutput } from './discovery.js';
 
-export const RANKING_PROMPT_VERSION = 'candidate-ranking-v2';
+export const RANKING_PROMPT_VERSION = 'candidate-ranking-v3';
+export const FINAL_RANKING_PROMPT_VERSION = 'final-ranking-v1';
 
 const boundedScore = z.number().int().min(0).max(100);
 export const candidateDecisionSchema = z.enum([
@@ -85,6 +88,8 @@ export type RankingInput = {
   currentGame: string;
   currentGameConfidence: number;
   candidates: RankingCandidateInput[];
+  priorReview?: CandidateRankingOutput;
+  discoveryReview?: DiscoveryOutput;
 };
 export type RankingResult = {
   output: CandidateRankingOutput;
@@ -282,14 +287,15 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
   constructor(
     private config: Config,
     private fetcher: Fetcher = fetch,
+    private stage: 'VISUAL_VERIFICATION' | 'FINAL_RANKING' = 'VISUAL_VERIFICATION',
   ) {
-    if (!config.OPENAI_API_KEY || !config.AI_VISION_MODEL)
+    if (!config.OPENAI_API_KEY)
       throw new AIProviderError(
         'AI_CONFIGURATION_ERROR',
-        'OpenAI ranking requires OPENAI_API_KEY and AI_VISION_MODEL.',
+        'OpenAI ranking requires OPENAI_API_KEY.',
         true,
       );
-    this.model = config.AI_VISION_MODEL;
+    this.model = modelForStage(config, stage);
   }
 
   async rank(input: RankingInput): Promise<RankingResult> {
@@ -301,6 +307,8 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
           currentGame: input.currentGame,
           currentGameConfidence: input.currentGameConfidence,
           candidates: input.candidates.map(({ frames: _frames, ...candidate }) => candidate),
+          priorReview: input.priorReview ?? null,
+          discoveryReview: input.discoveryReview ?? null,
           analysisFocus:
             detectorGuidance[input.detectorProfile] ?? detectorGuidance['generic-gameplay-v1'],
           task: 'Use the ordered adaptive frames, their timestamps, transcript, OCR timeline, audio statistics, and detector evidence to reconstruct setup, action, and payoff. Identify the game only when supported. Decide whether each event genuinely deserves a Short; rejection is preferred to weak content. Return event anchors, content-driven boundaries, all scores, an explicit decision, and concise evidence-based summaries. Do not invent events or hidden reasoning.',
@@ -331,7 +339,9 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
           safety_identifier: input.ownerHash,
           prompt_cache_key: input.inputHash,
           instructions:
-            'You are a conservative gameplay highlight analyst. Use only visible evidence. Never provide hidden reasoning; return concise reasons only.',
+            this.stage === 'FINAL_RANKING'
+              ? 'You are the final gameplay Shorts editor. Independently verify the event against visible evidence and transcript, use the prior visual review only as fallible context, and return every candidate exactly once. Reject weak or redundant moments. Do not invent events or hidden reasoning.'
+              : 'You are a conservative gameplay highlight analyst. Use only visible evidence. Never provide hidden reasoning; return concise reasons only.',
           input: [{ role: 'user', content }],
           text: {
             format: {
@@ -407,9 +417,12 @@ export class OpenAICandidateRankingProvider implements CandidateRankingProvider 
   }
 }
 
-export function createCandidateRankingProvider(config: Config): CandidateRankingProvider {
-  return config.AI_MODE === 'openai' && config.OPENAI_API_KEY && config.AI_VISION_MODEL
-    ? new OpenAICandidateRankingProvider(config)
+export function createCandidateRankingProvider(
+  config: Config,
+  stage: 'VISUAL_VERIFICATION' | 'FINAL_RANKING' = 'VISUAL_VERIFICATION',
+): CandidateRankingProvider {
+  return config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+    ? new OpenAICandidateRankingProvider(config, fetch, stage)
     : new MockCandidateRankingProvider();
 }
 
@@ -692,13 +705,13 @@ export class OpenAIShortPlanningProvider implements ShortPlanningProvider {
     private config: Config,
     private fetcher: Fetcher = fetch,
   ) {
-    if (!config.OPENAI_API_KEY || !(config.AI_REASONING_MODEL || config.AI_VISION_MODEL))
+    if (!config.OPENAI_API_KEY)
       throw new AIProviderError(
         'AI_CONFIGURATION_ERROR',
-        'OpenAI short planning requires an API key and reasoning or vision model.',
+        'OpenAI short planning requires an API key.',
         true,
       );
-    this.model = config.AI_REASONING_MODEL ?? config.AI_VISION_MODEL!;
+    this.model = modelForStage(config, 'EDIT_PLANNING');
   }
   async plan(input: ShortPlanningInput): Promise<ShortPlanningResult> {
     let response: Response;
@@ -810,7 +823,7 @@ export class OpenAIShortPlanningProvider implements ShortPlanningProvider {
 export function createShortPlanningProvider(config: Config): ShortPlanningProvider {
   return config.AI_MODE === 'openai' &&
     config.OPENAI_API_KEY &&
-    (config.AI_REASONING_MODEL || config.AI_VISION_MODEL)
+    modelForStage(config, 'EDIT_PLANNING')
     ? new OpenAIShortPlanningProvider(config)
     : new MockShortPlanningProvider();
 }

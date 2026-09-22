@@ -19,7 +19,6 @@ import {
   gameplayShortPropsSchema,
   validateEditDecisionList,
 } from '../../../packages/remotion/src/public.js';
-import type { EditDecisionList } from '../../../packages/remotion/src/public.js';
 import type { Storage } from '../../../packages/storage/src/index.js';
 import {
   inspectVideo,

@@ -1,17 +1,17 @@
 import { createHash } from 'node:crypto';
-import { readFile, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
 import { UnrecoverableError } from 'bullmq';
 import type { CandidateDecision, Prisma, PrismaClient } from '@prisma/client';
 import type { Config } from '../../../packages/config/src/index.js';
-import { DUPLICATE_POLICY, TRACKING_POLICY } from '../../../packages/config/src/media-policy.js';
+import {
+  DUPLICATE_POLICY,
+  TRACKING_POLICY,
+  resolveDuplicatePolicy,
+} from '../../../packages/config/src/media-policy.js';
 import {
   AIProviderError,
   createShortPlanningProvider,
   SHORT_PLANNING_PROMPT_VERSION,
   shortPlanningSchema,
-  transcribeAudioClip,
   type TranscriptWord,
 } from '../../../packages/ai/src/index.js';
 import { MAX_ATTEMPTS } from '../../../packages/jobs/src/index.js';
@@ -23,7 +23,15 @@ import {
 } from '../../../packages/remotion/src/public.js';
 import { deterministicArm } from '../../../packages/learning/src/index.js';
 import type { Storage } from '../../../packages/storage/src/index.js';
-import { runMedia, visualSequenceSimilarity } from '../../../packages/video-analysis/src/index.js';
+import { visualSequenceSimilarity } from '../../../packages/video-analysis/src/index.js';
+import { transcriptConfigHash, SOURCE_TRANSCRIPT_VERSION } from './transcript.js';
+import { assertModelAccess } from '../../../packages/ai/src/model-access.js';
+import {
+  generateMetadata,
+  metadataSchema,
+  METADATA_PROMPT_VERSION,
+} from '../../../packages/ai/src/metadata.js';
+import { modelForStage } from '../../../packages/ai/src/model-router.js';
 import {
   evaluateDuplicate,
   temporalSimilarity,
@@ -53,6 +61,7 @@ type YieldCandidate = {
 export function selectQualifiedShortCandidates<T extends YieldCandidate>(
   ranked: T[],
   safetyLimit: number,
+  duplicatePolicy: ReturnType<typeof resolveDuplicatePolicy> = DUPLICATE_POLICY,
 ) {
   if (!ranked.length) return [];
   const strongest = Math.max(...ranked.map((candidate) => candidate.score.highlightScore)),
@@ -87,7 +96,7 @@ export function selectQualifiedShortCandidates<T extends YieldCandidate>(
       score.highlightScore >= adaptiveFloor &&
       worthiness >= 55 &&
       (!candidate.decision || candidate.decision === 'SELECTED') &&
-      (candidate.duplicateScore ?? 0) < DUPLICATE_POLICY.compositeThreshold &&
+      (candidate.duplicateScore ?? 0) < duplicatePolicy.compositeThreshold &&
       score.confidence >= 25 &&
       score.editability >= 45 &&
       score.visualClarity >= 35 &&
@@ -117,7 +126,13 @@ async function removePersistentDuplicates<
     evidenceSummary: unknown;
     detectedEvent?: { id: string } | null;
   },
->(db: PrismaClient, userId: string, currentGame: string, candidates: T[]) {
+>(
+  db: PrismaClient,
+  userId: string,
+  currentGame: string,
+  candidates: T[],
+  duplicatePolicy: ReturnType<typeof resolveDuplicatePolicy>,
+) {
   const publications = await db.youTubePublication.findMany({
       where: { userId, state: { in: ['PENDING', 'UPLOADING', 'UPLOADED', 'PUBLISHED'] } },
       select: { shortId: true },
@@ -194,16 +209,19 @@ async function removePersistentDuplicates<
           candidateEvidence.transcript ?? '',
           priorEvidence.transcript ?? '',
         ),
-        result = evaluateDuplicate({
-          sameEvent: Boolean(
-            candidate.detectedEvent?.id && candidate.detectedEvent.id === prior.eventId,
-          ),
-          ...temporal,
-          visualSimilarity: visual,
-          semanticSimilarity: semantic,
-          transcriptSimilarity: transcript || null,
-          sameGame: currentGame.toLowerCase() === prior.game.toLowerCase(),
-        });
+        result = evaluateDuplicate(
+          {
+            sameEvent: Boolean(
+              candidate.detectedEvent?.id && candidate.detectedEvent.id === prior.eventId,
+            ),
+            ...temporal,
+            visualSimilarity: visual,
+            semanticSimilarity: semantic,
+            transcriptSimilarity: transcript || null,
+            sameGame: currentGame.toLowerCase() === prior.game.toLowerCase(),
+          },
+          duplicatePolicy,
+        );
       if (!strongest || result.score > strongest.score) {
         strongest = result;
         matchedId = prior.id;
@@ -219,7 +237,7 @@ async function removePersistentDuplicates<
           ...(strongest ?? {
             components: {},
             thresholds: {},
-            policyVersion: 'duplicate-policy-v2',
+            policyVersion: duplicatePolicy.version,
           }),
           matchedId,
         },
@@ -281,58 +299,6 @@ export function resolveTrackingCrop(input: {
     confidence: input.evidence?.confidence ?? 0,
     points: [] as TrackingEvidence['points'],
   };
-}
-
-async function candidateTranscript(
-  storage: Storage,
-  config: Config,
-  source: { hasAudio: boolean | null; assets: Array<{ kind: string; storageKey: string }> },
-  candidate: { startTime: number; endTime: number },
-) {
-  if (config.AI_MODE !== 'openai' || !source.hasAudio) return { text: '', words: [] };
-  const asset = source.assets.find((item) => item.kind === 'ORIGINAL');
-  if (!asset) return { text: '', words: [] };
-  const materialized = await storage.materialize(asset.storageKey),
-    work = await mkdtemp(resolve(tmpdir(), 'short-transcript-')),
-    audioPath = resolve(work, 'clip.wav');
-  try {
-    await runMedia(
-      config.FFMPEG_PATH,
-      [
-        '-y',
-        '-nostdin',
-        '-v',
-        'error',
-        '-ss',
-        String(candidate.startTime),
-        '-i',
-        materialized.path,
-        '-t',
-        String(Math.max(0.1, candidate.endTime - candidate.startTime)),
-        '-vn',
-        '-ac',
-        '1',
-        '-ar',
-        '16000',
-        '-c:a',
-        'pcm_s16le',
-        audioPath,
-      ],
-      Math.min(config.MEDIA_TIMEOUT_MS, 120_000),
-    );
-    const transcript = await transcribeAudioClip(config, await readFile(audioPath));
-    return {
-      text: transcript.text.slice(0, 2000),
-      words: transcript.words.map((word) => ({
-        ...word,
-        start: candidate.startTime + word.start,
-        end: candidate.startTime + word.end,
-      })),
-    };
-  } finally {
-    await materialized.release();
-    await rm(work, { recursive: true, force: true });
-  }
 }
 
 function subtitleCaptions(
@@ -612,6 +578,7 @@ function buildEdl(
 }
 
 export async function planShorts(db: PrismaClient, storage: Storage, config: Config, id: string) {
+  void storage;
   const job = await db.jobRun.findUniqueOrThrow({
     where: { id },
     include: {
@@ -664,11 +631,16 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
       update: {},
     });
     const provider = createShortPlanningProvider(config),
+      duplicatePolicy = resolveDuplicatePolicy(
+        config,
+        job.source.gameDetection?.game ?? 'Unknown gameplay',
+      ),
       initiallyQualified = selectQualifiedShortCandidates(
         job.source.candidates.filter(
           (candidate) => candidate.analysisId === job.source.analyses[0]?.id,
         ) as Array<(typeof job.source.candidates)[number] & YieldCandidate>,
         config.SHORTS_PER_SOURCE_LIMIT,
+        duplicatePolicy,
       ),
       ownerHash = hash(job.source.userId).slice(0, 64),
       silence = (job.source.analyses[0]?.signals ?? [])
@@ -679,11 +651,40 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
       job.source.userId,
       job.source.gameDetection?.game ?? 'Unknown gameplay',
       initiallyQualified,
+      duplicatePolicy,
     );
+    if (candidates.length) await assertModelAccess(config, ['EDIT_PLANNING', 'METADATA']);
+    const sourceTranscript =
+      config.AI_MODE === 'openai'
+        ? await db.sourceTranscript.findFirst({
+            where: {
+              sourceId: job.sourceId,
+              sourceHash: job.source.sha256,
+              configHash: transcriptConfigHash(config, 'GAMEPLAY'),
+              version: SOURCE_TRANSCRIPT_VERSION,
+              status: 'SUCCEEDED',
+            },
+            include: { segments: { orderBy: { startTime: 'asc' } } },
+          })
+        : null;
     for (let index = 0; index < candidates.length; index++) {
       const candidate = candidates[index]!,
         score = candidate.score!,
-        transcript = await candidateTranscript(storage, config, job.source, candidate);
+        relevantWords = (sourceTranscript?.segments ?? []).filter(
+          (segment) =>
+            segment.endTime > candidate.startTime && segment.startTime < candidate.endTime,
+        ),
+        transcript = {
+          text: relevantWords
+            .map((word) => word.text)
+            .join(' ')
+            .slice(0, 2000),
+          words: relevantWords.map((word): TranscriptWord => ({
+            word: word.text,
+            start: word.startTime,
+            end: word.endTime,
+          })),
+        };
       const signature = {
           sourceHash: job.source.sha256,
           game: job.source.gameDetection?.game ?? 'Unknown gameplay',
@@ -748,17 +749,80 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
       );
       if (!selected)
         throw new AIProviderError('AI_INVALID_RESPONSE', 'Selected short concept is missing.');
-      const edl = buildEdl(job.source.duration, candidate, selected, silence, transcript.words, {
-          sourceVideoId: job.source.id,
-          eventId: candidate.detectedEvent?.id ?? candidate.id,
-          analysisVersion: job.source.analyses[0]?.analysisVersion ?? 'analysis-v2',
-          analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
-          highlightScore: score.highlightScore,
-          shortWorthinessScore: score.shortWorthinessScore,
-          reasoningSummary: score.reason,
-          sourceWidth: job.source.width,
-          sourceHeight: job.source.height,
+      const metadataInputHash = hash(
+        JSON.stringify({
+          sourceHash: job.source.sha256,
+          candidateId: candidate.id,
+          selected,
+          transcript: transcript.text,
+          promptVersion: METADATA_PROMPT_VERSION,
         }),
+      );
+      const metadataModel = modelForStage(config, 'METADATA');
+      const metadataCached =
+        config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+          ? await db.aiResultCache.findUnique({
+              where: {
+                inputHash_provider_model_promptVersion: {
+                  inputHash: metadataInputHash,
+                  provider: 'openai',
+                  model: metadataModel,
+                  promptVersion: METADATA_PROMPT_VERSION,
+                },
+              },
+            })
+          : null;
+      const metadataResult =
+        config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+          ? metadataCached
+            ? {
+                output: metadataSchema.parse(metadataCached.output),
+                provider: 'openai',
+                model: metadataModel,
+                inputTokens: metadataCached.inputTokens,
+                outputTokens: metadataCached.outputTokens,
+                estimatedCostUsd: metadataCached.estimatedCostUsd
+                  ? Number(metadataCached.estimatedCostUsd)
+                  : null,
+              }
+            : await generateMetadata(config, {
+                inputHash: metadataInputHash,
+                ownerHash,
+                game: signature.game,
+                eventType: signature.eventType,
+                eventSummary: score.reason,
+                transcript: transcript.text,
+                selectedConcept: selected,
+                preferredHashtags: settings.preferredHashtags,
+                bannedHashtags: settings.bannedHashtags,
+              })
+          : null;
+      const editorialSelected = metadataResult
+        ? {
+            ...selected,
+            titleCandidates: metadataResult.output.titleCandidates,
+            description: metadataResult.output.description,
+            hashtags: metadataResult.output.hashtags,
+          }
+        : selected;
+      const edl = buildEdl(
+          job.source.duration,
+          candidate,
+          editorialSelected,
+          silence,
+          transcript.words,
+          {
+            sourceVideoId: job.source.id,
+            eventId: candidate.detectedEvent?.id ?? candidate.id,
+            analysisVersion: job.source.analyses[0]?.analysisVersion ?? 'analysis-v2',
+            analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
+            highlightScore: score.highlightScore,
+            shortWorthinessScore: score.shortWorthinessScore,
+            reasoningSummary: score.reason,
+            sourceWidth: job.source.width,
+            sourceHeight: job.source.height,
+          },
+        ),
         qualityScore = Math.round(
           (score.highlightScore +
             score.visualClarity +
@@ -767,6 +831,64 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
             4,
         );
       await db.$transaction(async (tx) => {
+        if (metadataResult) {
+          if (!metadataCached)
+            await tx.aiResultCache.upsert({
+              where: {
+                inputHash_provider_model_promptVersion: {
+                  inputHash: metadataInputHash,
+                  provider: metadataResult.provider,
+                  model: metadataResult.model,
+                  promptVersion: METADATA_PROMPT_VERSION,
+                },
+              },
+              create: {
+                sourceId: job.sourceId,
+                inputHash: metadataInputHash,
+                provider: metadataResult.provider,
+                model: metadataResult.model,
+                promptVersion: METADATA_PROMPT_VERSION,
+                output: metadataResult.output as Prisma.InputJsonValue,
+                inputTokens: metadataResult.inputTokens,
+                outputTokens: metadataResult.outputTokens,
+                estimatedCostUsd: metadataResult.estimatedCostUsd,
+              },
+              update: {},
+            });
+          await tx.aiStageResult.upsert({
+            where: {
+              sourceId_stage_inputHash_provider_model_promptVersion: {
+                sourceId: job.sourceId,
+                stage: 'METADATA',
+                inputHash: metadataInputHash,
+                provider: metadataResult.provider,
+                model: metadataResult.model,
+                promptVersion: METADATA_PROMPT_VERSION,
+              },
+            },
+            create: {
+              sourceId: job.sourceId,
+              candidateId: candidate.id,
+              stage: 'METADATA',
+              inputHash: metadataInputHash,
+              provider: metadataResult.provider,
+              model: metadataResult.model,
+              promptVersion: METADATA_PROMPT_VERSION,
+              schemaVersion: 'short-metadata-v1',
+              evidenceRefs: {
+                candidateId: candidate.id,
+                transcriptId: sourceTranscript?.id ?? null,
+              },
+              output: metadataResult.output as Prisma.InputJsonValue,
+              scores: {},
+              inputTokens: metadataResult.inputTokens,
+              outputTokens: metadataResult.outputTokens,
+              estimatedCostUsd: metadataResult.estimatedCostUsd,
+              cached: Boolean(metadataCached),
+            },
+            update: {},
+          });
+        }
         if (!cached)
           await tx.aiResultCache.upsert({
             where: {
@@ -790,6 +912,40 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
             },
             update: {},
           });
+        await tx.aiStageResult.upsert({
+          where: {
+            sourceId_stage_inputHash_provider_model_promptVersion: {
+              sourceId: job.sourceId,
+              stage: 'EDIT_PLANNING',
+              inputHash,
+              provider: result.provider,
+              model: result.model,
+              promptVersion: SHORT_PLANNING_PROMPT_VERSION,
+            },
+          },
+          create: {
+            sourceId: job.sourceId,
+            candidateId: candidate.id,
+            stage: 'EDIT_PLANNING',
+            inputHash,
+            provider: result.provider,
+            model: result.model,
+            promptVersion: SHORT_PLANNING_PROMPT_VERSION,
+            schemaVersion: 'short-planning-v1',
+            evidenceRefs: {
+              candidateId: candidate.id,
+              transcriptId: sourceTranscript?.id ?? null,
+              analysisId: job.source.analyses[0]?.id ?? null,
+            },
+            output: result.output as Prisma.InputJsonValue,
+            scores: { qualityScore, selectedKey: result.output.selectedKey },
+            inputTokens: result.inputTokens,
+            outputTokens: result.outputTokens,
+            estimatedCostUsd: result.estimatedCostUsd,
+            cached: Boolean(cached),
+          },
+          update: {},
+        });
         for (const concept of result.output.concepts)
           await tx.shortConcept.upsert({
             where: { candidateId_key: { candidateId: candidate.id, key: concept.key } },
@@ -823,7 +979,7 @@ export async function planShorts(db: PrismaClient, storage: Storage, config: Con
             selectedConceptId: selectedRow.id,
             state: 'EDIT_PLANNED',
             title: edl.title,
-            titleCandidates: selected.titleCandidates,
+            titleCandidates: editorialSelected.titleCandidates,
             description: edl.description,
             hashtags: edl.hashtags,
             game: signature.game,

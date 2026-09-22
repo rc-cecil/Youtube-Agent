@@ -429,6 +429,7 @@ model UploadSession {
   userId               String
   user                 User         @relation(fields: [userId], references: [id])
   filename             String
+  contentType          String       @default("AUTO")
   mimeType             String
   bytes                BigInt
   chunkBytes           Int
@@ -463,6 +464,7 @@ model SourceVideo {
   uploadId             String               @unique
   upload               UploadSession        @relation(fields: [uploadId], references: [id])
   filename             String
+  contentType          String               @default("AUTO")
   mimeType             String
   bytes                BigInt
   sha256               String
@@ -486,6 +488,8 @@ model SourceVideo {
   candidates           HighlightCandidate[]
   detectedEvents       DetectedEvent[]
   aiCache              AiResultCache[]
+  aiStages             AiStageResult[]
+  transcripts          SourceTranscript[]
   shorts               GeneratedShort[]
 
   @@index([userId, createdAt])
@@ -578,6 +582,7 @@ model HighlightCandidate {
   detectedEvent  DetectedEvent?
   concepts       ShortConcept[]
   generatedShort GeneratedShort?
+  aiStages       AiStageResult[]
 
   @@index([sourceId, signalScore])
   @@index([analysisId, eventTime])
@@ -647,6 +652,98 @@ model HighlightScore {
   updatedAt                 DateTime           @updatedAt
 
   @@index([highlightScore])
+}
+
+model SourceTranscript {
+  id                String              @id @default(uuid())
+  sourceId          String
+  source            SourceVideo         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  version           String
+  sourceHash        String
+  configHash        String
+  status            String              @default("RUNNING")
+  provider          String              @default("openai")
+  model             String
+  alignmentModel    String?
+  language          String?
+  text              String              @default("")
+  errorCode         String?
+  errorMessage      String?
+  usage             Json                @default("{}")
+  estimatedCostUsd  Decimal?            @db.Decimal(12, 6)
+  startedAt         DateTime            @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime            @updatedAt
+  chunks            TranscriptChunk[]
+  segments          TranscriptSegment[]
+
+  @@unique([sourceId, version, sourceHash, configHash])
+  @@index([sourceId, status, completedAt])
+}
+
+model TranscriptChunk {
+  id            String           @id @default(uuid())
+  transcriptId  String
+  transcript    SourceTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  index         Int
+  startTime     Float
+  endTime       Float
+  overlapBefore Float            @default(0)
+  status        String           @default("PENDING")
+  text          String           @default("")
+  alignmentText String           @default("")
+  usage         Json             @default("{}")
+  errorCode     String?
+  updatedAt     DateTime         @updatedAt
+
+  @@unique([transcriptId, index])
+}
+
+model TranscriptSegment {
+  id              String           @id @default(uuid())
+  transcriptId    String
+  transcript      SourceTranscript @relation(fields: [transcriptId], references: [id], onDelete: Cascade)
+  chunkIndex      Int
+  startTime       Float
+  endTime         Float
+  text            String
+  speaker         String?
+  confidence      Float?
+  timeSource      String
+  textSource      String
+  speakerSource   String?
+  alignment       Json             @default("{}")
+
+  @@index([transcriptId, startTime])
+}
+
+model AiStageResult {
+  id               String              @id @default(uuid())
+  sourceId         String
+  source           SourceVideo         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  candidateId      String?
+  candidate        HighlightCandidate? @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  shortId          String?
+  short            GeneratedShort?     @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  stage            String
+  provider         String
+  model            String
+  promptVersion    String
+  schemaVersion    String
+  inputHash        String
+  evidenceRefs     Json                @default("{}")
+  output           Json
+  scores           Json                @default("{}")
+  inputTokens      Int?
+  outputTokens     Int?
+  estimatedCostUsd Decimal?            @db.Decimal(12, 6)
+  cached           Boolean            @default(false)
+  createdAt        DateTime           @default(now())
+
+  @@unique([sourceId, stage, inputHash, provider, model, promptVersion])
+  @@index([sourceId, stage, createdAt])
+  @@index([candidateId, stage])
+  @@index([shortId, stage])
 }
 
 model AiResultCache {
@@ -770,6 +867,8 @@ model GeneratedShort {
   performanceFeature        PerformanceFeature?
   experimentAssignments     ExperimentAssignment[]
   feedback                  ShortFeedback[]
+  aiStages                  AiStageResult[]
+  higgsfieldGenerations     HiggsfieldGeneration[]
 
   @@index([userId, createdAt])
   @@index([sourceId, createdAt])
@@ -789,6 +888,33 @@ model EditDecisionList {
   renders       RenderArtifact[]
 
   @@unique([shortId, version])
+}
+
+model HiggsfieldGeneration {
+  id                  String         @id @default(uuid())
+  shortId             String
+  short               GeneratedShort @relation(fields: [shortId], references: [id], onDelete: Cascade)
+  kind                String
+  model               String
+  argumentHash        String
+  arguments           Json
+  status              String         @default("PENDING")
+  providerRequestId   String?        @unique
+  statusUrl           String?
+  estimateUsd         Decimal        @db.Decimal(12, 6)
+  actualCostUsd       Decimal?       @db.Decimal(12, 6)
+  result              Json?
+  storageKey          String?
+  errorCode           String?
+  errorMessage        String?
+  submittedAt         DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  @@unique([shortId, kind, model, argumentHash])
+  @@index([status, updatedAt])
+  @@index([shortId, createdAt])
 }
 
 model RenderArtifact {

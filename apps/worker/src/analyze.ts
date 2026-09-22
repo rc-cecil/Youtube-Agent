@@ -13,10 +13,8 @@ import {
   MediaError,
 } from '../../../packages/video-analysis/src/index.js';
 import { identifyGame } from '../../../packages/video-analysis/src/game-identification.js';
-import {
-  buildCandidatesWithDetector,
-  detectorForGame,
-} from '../../../packages/game-detectors/src/index.js';
+import { strategyForSource } from '../../../packages/video-analysis/src/content-strategy.js';
+import { buildCandidatesWithDetector } from '../../../packages/game-detectors/src/index.js';
 import { MAX_ATTEMPTS } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 
@@ -110,7 +108,13 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
       effectiveGame = job.source.gameDetection?.overridden
         ? job.source.gameDetection
         : inferredGame,
-      detector = detectorForGame(effectiveGame.game, effectiveGame.confidence),
+      strategy = strategyForSource({
+        contentType: job.source.contentType as 'AUTO' | 'GAMEPLAY' | 'PODCAST',
+        filename: job.source.filename,
+        game: effectiveGame.game,
+        gameConfidence: effectiveGame.confidence,
+      }),
+      detector = strategy.detector,
       candidates = buildCandidatesWithDetector(
         detector,
         result.signals,
@@ -138,6 +142,14 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
           sampleRate: config.ANALYSIS_FPS,
           ...counts,
           summary: result.summary,
+          policySnapshot: {
+            clustering: 'content-strategy-v1',
+            contentType: strategy.resolved.type,
+            contentTypeMethod: strategy.resolved.method,
+            detectorProfile: detector.profile,
+            duration: 'content-duration-v2',
+            sampling: 'adaptive-sampling-v1',
+          },
           completedAt: new Date(),
         },
       });
@@ -179,7 +191,7 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
             },
           })),
         });
-      if (!job.source.gameDetection?.overridden)
+      if (strategy.resolved.type === 'GAMEPLAY' && !job.source.gameDetection?.overridden)
         await tx.gameDetection.upsert({
           where: { sourceId: job.sourceId },
           create: { sourceId: job.sourceId, ...inferredGame, detectorProfile: detector.profile },
@@ -222,7 +234,7 @@ export async function analyze(db: PrismaClient, storage: Storage, config: Config
         candidateCount: candidates.length,
         durationMs: Date.now() - started,
       },
-      'Gameplay analysis completed',
+      'Content analysis completed',
     );
   } catch (error) {
     const code = error instanceof MediaError ? error.code : 'ANALYSIS_ERROR',

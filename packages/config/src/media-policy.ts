@@ -62,7 +62,7 @@ export const RENDER_PRESETS: Record<RenderPresetName, RenderPreset> = {
   },
 };
 
-const clusteringProfileSchema = z.object({
+export const clusteringProfileSchema = z.object({
   id: z.string().min(1),
   gamePattern: z.string(),
   eventPattern: z.string(),
@@ -152,6 +152,39 @@ export const DUPLICATE_POLICY = {
     gameIdentity: 0.04,
   },
 } as const;
+
+export const duplicateThresholdOverrideSchema = z.object({
+  compositeThreshold: z.number().min(0).max(1).optional(),
+  shorterClipOverlapThreshold: z.number().min(0).max(1).optional(),
+  visualSimilarityThreshold: z.number().min(0).max(1).optional(),
+});
+export const duplicateGameOverridesSchema = z.record(
+  z.string().min(1).max(100),
+  duplicateThresholdOverrideSchema,
+);
+
+export function resolveDuplicatePolicy(
+  config: {
+    DUPLICATE_COMPOSITE_THRESHOLD: number;
+    DUPLICATE_SHORTER_OVERLAP_THRESHOLD: number;
+    DUPLICATE_VISUAL_THRESHOLD: number;
+    DUPLICATE_GAME_OVERRIDES: z.infer<typeof duplicateGameOverridesSchema>;
+  },
+  game: string,
+) {
+  const gameOverride = Object.entries(config.DUPLICATE_GAME_OVERRIDES).find(
+    ([name]) => name.toLowerCase() === game.toLowerCase(),
+  )?.[1];
+  return {
+    ...DUPLICATE_POLICY,
+    version: gameOverride ? 'duplicate-policy-v2-game-config' : 'duplicate-policy-v2-config',
+    compositeThreshold: gameOverride?.compositeThreshold ?? config.DUPLICATE_COMPOSITE_THRESHOLD,
+    shorterClipOverlapThreshold:
+      gameOverride?.shorterClipOverlapThreshold ?? config.DUPLICATE_SHORTER_OVERLAP_THRESHOLD,
+    visualSimilarityThreshold:
+      gameOverride?.visualSimilarityThreshold ?? config.DUPLICATE_VISUAL_THRESHOLD,
+  };
+}
 
 export const ADAPTIVE_SAMPLING_POLICY = {
   version: 'adaptive-sampling-v1',

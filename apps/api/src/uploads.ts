@@ -40,6 +40,7 @@ export class UploadService {
         data: {
           userId,
           filename: data.filename,
+          contentType: data.contentType,
           mimeType: data.mimeType,
           bytes: BigInt(data.bytes),
           chunkBytes: this.config.UPLOAD_CHUNK_BYTES,
@@ -159,6 +160,7 @@ export class UploadService {
             userId,
             uploadId: id,
             filename: upload.filename,
+            contentType: upload.contentType,
             mimeType: upload.mimeType,
             bytes: upload.bytes,
             sha256: hash.digest('hex'),

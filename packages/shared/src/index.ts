@@ -10,6 +10,7 @@ export const uploadInput = z.object({
     ),
   mimeType: z.enum(['video/mp4', 'video/quicktime', 'video/webm']),
   bytes: z.number().int().positive(),
+  contentType: z.enum(['AUTO', 'GAMEPLAY', 'PODCAST']).default('AUTO'),
   rightsAcknowledged: z.literal(true),
 });
 export const loginInput = z.object({

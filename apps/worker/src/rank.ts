@@ -13,11 +13,20 @@ import {
   candidateRankingSchema,
   createCandidateRankingProvider,
   RANKING_PROMPT_VERSION,
-  transcribeAudioClip,
+  FINAL_RANKING_PROMPT_VERSION,
   type CandidateRankingOutput,
   type RankingCandidateInput,
 } from '../../../packages/ai/src/index.js';
 import { detectorForGame } from '../../../packages/game-detectors/src/index.js';
+import { resolveContentType } from '../../../packages/video-analysis/src/content-strategy.js';
+import { ensureSourceTranscript, transcriptExcerpt } from './transcript.js';
+import {
+  discoverCandidates,
+  discoverySchema,
+  DISCOVERY_PROMPT_VERSION,
+} from '../../../packages/ai/src/discovery.js';
+import { modelForStage } from '../../../packages/ai/src/model-router.js';
+import { assertModelAccess } from '../../../packages/ai/src/model-access.js';
 import { MAX_ATTEMPTS } from '../../../packages/jobs/src/index.js';
 import { logger } from '../../../packages/logger/src/index.js';
 import {
@@ -25,7 +34,6 @@ import {
   adaptiveSampleTimestamps,
   MediaError,
   perceptualVideoHash,
-  runMedia,
   trackMotionSubject,
   type AnalysisSignal,
 } from '../../../packages/video-analysis/src/index.js';
@@ -40,43 +48,6 @@ function sha256(value: string | Buffer) {
   return createHash('sha256').update(value).digest('hex');
 }
 
-async function transcribeCandidate(
-  sourcePath: string | null,
-  candidate: { startTime: number; endTime: number },
-  work: string,
-  candidateIndex: number,
-  config: Config,
-) {
-  if (!sourcePath || !config.OPENAI_API_KEY) return '';
-  const audioPath = resolve(work, `candidate-${candidateIndex}.wav`);
-  await runMedia(
-    config.FFMPEG_PATH,
-    [
-      '-y',
-      '-nostdin',
-      '-v',
-      'error',
-      '-ss',
-      String(candidate.startTime),
-      '-i',
-      sourcePath,
-      '-t',
-      String(Math.max(0.1, candidate.endTime - candidate.startTime)),
-      '-vn',
-      '-ac',
-      '1',
-      '-ar',
-      '16000',
-      '-c:a',
-      'pcm_s16le',
-      audioPath,
-    ],
-    Math.min(config.MEDIA_TIMEOUT_MS, 120_000),
-  );
-  const transcript = await transcribeAudioClip(config, await readFile(audioPath));
-  return transcript.text.slice(0, 4000);
-}
-
 async function createOcrWorker() {
   const worker = await Tesseract.createWorker('eng', Tesseract.OEM.LSTM_ONLY, {
     langPath: resolve('node_modules/@tesseract.js-data/eng/4.0.0'),
@@ -89,18 +60,15 @@ async function createOcrWorker() {
 
 function cacheOutputForCandidates(raw: unknown, candidateIds: string[]) {
   const parsed = candidateRankingSchema.parse(raw);
-  if (parsed.rankings.length !== candidateIds.length)
+  if (
+    parsed.rankings.length !== candidateIds.length ||
+    candidateIds.some((id) => !parsed.rankings.some((ranking) => ranking.candidateId === id))
+  )
     throw new AIProviderError(
       'AI_INVALID_RESPONSE',
-      'Cached ranking count does not match finalists.',
+      'Cached ranking candidate IDs do not match finalists.',
     );
-  return candidateRankingSchema.parse({
-    ...parsed,
-    rankings: parsed.rankings.map((ranking, index) => ({
-      ...ranking,
-      candidateId: candidateIds[index],
-    })),
-  });
+  return parsed;
 }
 
 function assertCompleteRanking(output: CandidateRankingOutput, candidateIds: string[]) {
@@ -181,15 +149,46 @@ export async function rankCandidates(
     const currentAnalysis = job.source.analyses[0];
     if (!currentAnalysis)
       throw new MediaError('ANALYSIS_MISSING', 'No analysis version is available to rank.');
+    const contentType = resolveContentType(
+      job.source.contentType as 'AUTO' | 'GAMEPLAY' | 'PODCAST',
+      job.source.filename,
+      job.source.gameDetection?.confidence,
+    ).type;
     const finalists = job.source.candidates
       .filter((candidate) => candidate.analysisId === currentAnalysis.id)
       .slice(0, config.AI_FINALIST_LIMIT);
-    if (!finalists.length)
+    if (!finalists.length && contentType === 'GAMEPLAY')
       throw new MediaError('CANDIDATES_MISSING', 'No candidate moments are available to rank.');
     materialized = await storage.materialize(proxy.storageKey);
     const original = job.source.assets.find((asset) => asset.kind === 'ORIGINAL');
     if (config.OPENAI_API_KEY && job.source.hasAudio && original)
       originalMaterialized = await storage.materialize(original.storageKey);
+    const sourceTranscript = originalMaterialized
+      ? await ensureSourceTranscript({
+          db,
+          config,
+          sourceId: job.sourceId,
+          sourceHash: job.source.sha256,
+          sourcePath: originalMaterialized.path,
+          duration: job.source.duration,
+          contentType,
+          work,
+        })
+      : null;
+    if (contentType === 'PODCAST') {
+      // Preserve transcript evidence, but never send podcast audio peaks through a gameplay prompt.
+      await db.$transaction(async (tx) => {
+        await tx.sourceVideo.update({ where: { id: job.sourceId }, data: { status: 'READY' } });
+        await tx.jobRun.update({
+          where: { id },
+          data: { state: 'SUCCEEDED', progress: 100, finishedAt: new Date() },
+        });
+      });
+      return;
+    }
+    await assertModelAccess(config, config.AI_STAGED_RANKING_ENABLED
+      ? ['DISCOVERY', 'VISUAL_VERIFICATION', 'FINAL_RANKING']
+      : ['VISUAL_VERIFICATION']);
     if (config.OPENAI_API_KEY) ocrWorker = await createOcrWorker();
     const detection = job.source.gameDetection ?? {
         game: 'Unknown gameplay',
@@ -264,13 +263,9 @@ export async function rankCandidates(
           const text = recognized.data.text.replace(/\s+/g, ' ').trim().slice(0, 500);
           if (text) ocrTimeline.push({ timestamp: timestamps[frameIndex]!, text });
         }
-      const transcript = await transcribeCandidate(
-        originalMaterialized?.path ?? null,
-        candidate,
-        work,
-        candidateIndex,
-        config,
-      );
+      const transcript = sourceTranscript
+        ? transcriptExcerpt(sourceTranscript, candidate.startTime, candidate.endTime)
+        : '';
       const visualHashTimestamps = [
           candidate.startTime + 0.1,
           candidate.eventTime,
@@ -329,7 +324,60 @@ export async function rankCandidates(
     }
     const provider = createCandidateRankingProvider(config),
       ownerHash = sha256(job.source.userId).slice(0, 64),
-      signature = rankingCandidates.map(({ frames: _frames, id: _id, ...candidate }) => candidate),
+      signature = rankingCandidates.map(({ frames: _frames, ...candidate }) => candidate),
+      discoveryInputHash = sha256(
+        JSON.stringify({
+          ownerHash,
+          sourceHash: job.source.sha256,
+          promptVersion: DISCOVERY_PROMPT_VERSION,
+          candidates: signature,
+        }),
+      ),
+      discoveryModel = modelForStage(config, 'DISCOVERY'),
+      discoveryCached =
+        config.AI_STAGED_RANKING_ENABLED && config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+          ? await db.aiResultCache.findUnique({
+              where: {
+                inputHash_provider_model_promptVersion: {
+                  inputHash: discoveryInputHash,
+                  provider: 'openai',
+                  model: discoveryModel,
+                  promptVersion: DISCOVERY_PROMPT_VERSION,
+                },
+              },
+            })
+          : null,
+      discoveryResult =
+        config.AI_STAGED_RANKING_ENABLED && config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+          ? discoveryCached
+            ? {
+                output: discoverySchema.parse(discoveryCached.output),
+                provider: 'openai',
+                model: discoveryModel,
+                inputTokens: discoveryCached.inputTokens,
+                outputTokens: discoveryCached.outputTokens,
+                estimatedCostUsd: discoveryCached.estimatedCostUsd
+                  ? Number(discoveryCached.estimatedCostUsd)
+                  : null,
+              }
+            : await discoverCandidates(config, {
+                inputHash: discoveryInputHash,
+                ownerHash,
+                game: job.source.gameDetection?.game ?? 'Unknown gameplay',
+                candidates: rankingCandidates.map((candidate) => ({
+                  id: candidate.id,
+                  startTime: candidate.startTime,
+                  eventTime: candidate.eventTime,
+                  endTime: candidate.endTime,
+                  eventType: candidate.eventType,
+                  signalScore: candidate.signalScore,
+                  transcript: candidate.transcript,
+                  ocrTimeline: candidate.ocrTimeline,
+                  audioStats: candidate.audioStats,
+                  detectorEvidence: candidate.detectorEvidence,
+                })),
+              })
+          : null,
       inputHash = sha256(
         JSON.stringify({
           ownerHash,
@@ -337,6 +385,7 @@ export async function rankCandidates(
           detectorProfile: detector.profile,
           promptVersion: RANKING_PROMPT_VERSION,
           candidates: signature,
+          discoveryReview: discoveryResult?.output ?? null,
         }),
       ),
       cached = await db.aiResultCache.findUnique({
@@ -350,7 +399,7 @@ export async function rankCandidates(
         },
       });
     progress = 65;
-    const result = cached
+    const verificationResult = cached
       ? {
           output: cacheOutputForCandidates(
             cached.output,
@@ -368,14 +417,76 @@ export async function rankCandidates(
           detectorProfile: detector.profile,
           currentGame: detection.game,
           currentGameConfidence: detection.confidence,
+          discoveryReview: discoveryResult?.output,
           candidates: rankingCandidates.map(
             ({ frameHashes: _hashes, adapterReason: _reason, ...candidate }) => candidate,
           ),
         });
     assertCompleteRanking(
-      result.output,
+      verificationResult.output,
       rankingCandidates.map((candidate) => candidate.id),
     );
+    const finalProvider =
+      config.AI_STAGED_RANKING_ENABLED && config.AI_MODE === 'openai' && config.OPENAI_API_KEY
+        ? createCandidateRankingProvider(config, 'FINAL_RANKING')
+        : null;
+    const finalInputHash = finalProvider
+      ? sha256(
+          JSON.stringify({
+            inputHash,
+            priorReview: verificationResult.output,
+            promptVersion: FINAL_RANKING_PROMPT_VERSION,
+          }),
+        )
+      : null;
+    const finalCached =
+      finalProvider && finalInputHash
+        ? await db.aiResultCache.findUnique({
+            where: {
+              inputHash_provider_model_promptVersion: {
+                inputHash: finalInputHash,
+                provider: finalProvider.name,
+                model: finalProvider.model,
+                promptVersion: FINAL_RANKING_PROMPT_VERSION,
+              },
+            },
+          })
+        : null;
+    const finalResult =
+      finalProvider && finalInputHash
+        ? finalCached
+          ? {
+              output: cacheOutputForCandidates(
+                finalCached.output,
+                rankingCandidates.map((candidate) => candidate.id),
+              ),
+              provider: finalCached.provider,
+              model: finalCached.model,
+              inputTokens: finalCached.inputTokens,
+              outputTokens: finalCached.outputTokens,
+              estimatedCostUsd: finalCached.estimatedCostUsd
+                ? Number(finalCached.estimatedCostUsd)
+                : null,
+            }
+          : await finalProvider.rank({
+              inputHash: finalInputHash,
+              ownerHash,
+              detectorProfile: detector.profile,
+              currentGame: detection.game,
+              currentGameConfidence: detection.confidence,
+              discoveryReview: discoveryResult?.output,
+              priorReview: verificationResult.output,
+              candidates: rankingCandidates.map(
+                ({ frameHashes: _hashes, adapterReason: _reason, ...candidate }) => candidate,
+              ),
+            })
+        : null;
+    if (finalResult)
+      assertCompleteRanking(
+        finalResult.output,
+        rankingCandidates.map((candidate) => candidate.id),
+      );
+    const result = finalResult ?? verificationResult;
     progress = 85;
     const strategyRecord = await db.strategyConfig.findFirst({
       where: { userId: job.source.userId, state: 'ACTIVE' },
@@ -402,29 +513,190 @@ export async function rankCandidates(
             ('updatedAt' in detection &&
               currentDetection.updatedAt.getTime() !== detection.updatedAt.getTime())),
         );
+      if (discoveryResult) {
+        if (!discoveryCached)
+          await tx.aiResultCache.upsert({
+            where: {
+              inputHash_provider_model_promptVersion: {
+                inputHash: discoveryInputHash,
+                provider: discoveryResult.provider,
+                model: discoveryResult.model,
+                promptVersion: DISCOVERY_PROMPT_VERSION,
+              },
+            },
+            create: {
+              sourceId: job.sourceId,
+              inputHash: discoveryInputHash,
+              provider: discoveryResult.provider,
+              model: discoveryResult.model,
+              promptVersion: DISCOVERY_PROMPT_VERSION,
+              output: discoveryResult.output as Prisma.InputJsonValue,
+              inputTokens: discoveryResult.inputTokens,
+              outputTokens: discoveryResult.outputTokens,
+              estimatedCostUsd: discoveryResult.estimatedCostUsd,
+            },
+            update: {},
+          });
+        await tx.aiStageResult.upsert({
+          where: {
+            sourceId_stage_inputHash_provider_model_promptVersion: {
+              sourceId: job.sourceId,
+              stage: 'DISCOVERY',
+              inputHash: discoveryInputHash,
+              provider: discoveryResult.provider,
+              model: discoveryResult.model,
+              promptVersion: DISCOVERY_PROMPT_VERSION,
+            },
+          },
+          create: {
+            sourceId: job.sourceId,
+            stage: 'DISCOVERY',
+            inputHash: discoveryInputHash,
+            provider: discoveryResult.provider,
+            model: discoveryResult.model,
+            promptVersion: DISCOVERY_PROMPT_VERSION,
+            schemaVersion: 'candidate-discovery-v1',
+            evidenceRefs: {
+              analysisId: currentAnalysis.id,
+              transcriptId: sourceTranscript?.id ?? null,
+              candidateIds: rankingCandidates.map((candidate) => candidate.id),
+            },
+            output: discoveryResult.output as Prisma.InputJsonValue,
+            scores: discoveryResult.output.rankings as Prisma.InputJsonValue,
+            inputTokens: discoveryResult.inputTokens,
+            outputTokens: discoveryResult.outputTokens,
+            estimatedCostUsd: discoveryResult.estimatedCostUsd,
+            cached: Boolean(discoveryCached),
+          },
+          update: {},
+        });
+      }
       if (!cached)
         await tx.aiResultCache.upsert({
           where: {
             inputHash_provider_model_promptVersion: {
               inputHash,
-              provider: result.provider,
-              model: result.model,
+              provider: verificationResult.provider,
+              model: verificationResult.model,
               promptVersion: RANKING_PROMPT_VERSION,
             },
           },
           create: {
             sourceId: job.sourceId,
             inputHash,
-            provider: result.provider,
-            model: result.model,
+            provider: verificationResult.provider,
+            model: verificationResult.model,
             promptVersion: RANKING_PROMPT_VERSION,
-            output: result.output as Prisma.InputJsonValue,
-            inputTokens: result.inputTokens,
-            outputTokens: result.outputTokens,
-            estimatedCostUsd: result.estimatedCostUsd,
+            output: verificationResult.output as Prisma.InputJsonValue,
+            inputTokens: verificationResult.inputTokens,
+            outputTokens: verificationResult.outputTokens,
+            estimatedCostUsd: verificationResult.estimatedCostUsd,
           },
           update: {},
         });
+      await tx.aiStageResult.upsert({
+        where: {
+          sourceId_stage_inputHash_provider_model_promptVersion: {
+            sourceId: job.sourceId,
+            stage: 'VISUAL_VERIFICATION',
+            inputHash,
+            provider: verificationResult.provider,
+            model: verificationResult.model,
+            promptVersion: RANKING_PROMPT_VERSION,
+          },
+        },
+        create: {
+          sourceId: job.sourceId,
+          stage: 'VISUAL_VERIFICATION',
+          inputHash,
+          provider: verificationResult.provider,
+          model: verificationResult.model,
+          promptVersion: RANKING_PROMPT_VERSION,
+          schemaVersion: 'candidate-ranking-v3',
+          evidenceRefs: {
+            analysisId: currentAnalysis.id,
+            transcriptId: sourceTranscript?.id ?? null,
+            candidateIds: rankingCandidates.map((candidate) => candidate.id),
+            frameKeys: frameAssets.map((asset) => asset.storageKey),
+          },
+          output: verificationResult.output as Prisma.InputJsonValue,
+          scores: verificationResult.output.rankings.map((ranking) => ({
+            candidateId: ranking.candidateId,
+            highlightScore: ranking.highlightScore,
+            confidence: ranking.confidence,
+            decision: ranking.decision,
+          })) as Prisma.InputJsonValue,
+          inputTokens: verificationResult.inputTokens,
+          outputTokens: verificationResult.outputTokens,
+          estimatedCostUsd: verificationResult.estimatedCostUsd,
+          cached: Boolean(cached),
+        },
+        update: {},
+      });
+      if (finalResult && finalInputHash) {
+        if (!finalCached)
+          await tx.aiResultCache.upsert({
+            where: {
+              inputHash_provider_model_promptVersion: {
+                inputHash: finalInputHash,
+                provider: finalResult.provider,
+                model: finalResult.model,
+                promptVersion: FINAL_RANKING_PROMPT_VERSION,
+              },
+            },
+            create: {
+              sourceId: job.sourceId,
+              inputHash: finalInputHash,
+              provider: finalResult.provider,
+              model: finalResult.model,
+              promptVersion: FINAL_RANKING_PROMPT_VERSION,
+              output: finalResult.output as Prisma.InputJsonValue,
+              inputTokens: finalResult.inputTokens,
+              outputTokens: finalResult.outputTokens,
+              estimatedCostUsd: finalResult.estimatedCostUsd,
+            },
+            update: {},
+          });
+        await tx.aiStageResult.upsert({
+          where: {
+            sourceId_stage_inputHash_provider_model_promptVersion: {
+              sourceId: job.sourceId,
+              stage: 'FINAL_RANKING',
+              inputHash: finalInputHash,
+              provider: finalResult.provider,
+              model: finalResult.model,
+              promptVersion: FINAL_RANKING_PROMPT_VERSION,
+            },
+          },
+          create: {
+            sourceId: job.sourceId,
+            stage: 'FINAL_RANKING',
+            inputHash: finalInputHash,
+            provider: finalResult.provider,
+            model: finalResult.model,
+            promptVersion: FINAL_RANKING_PROMPT_VERSION,
+            schemaVersion: 'candidate-ranking-v2',
+            evidenceRefs: {
+              analysisId: currentAnalysis.id,
+              visualVerificationHash: inputHash,
+              transcriptId: sourceTranscript?.id ?? null,
+              candidateIds: rankingCandidates.map((candidate) => candidate.id),
+            },
+            output: finalResult.output as Prisma.InputJsonValue,
+            scores: finalResult.output.rankings.map((ranking) => ({
+              candidateId: ranking.candidateId,
+              highlightScore: ranking.highlightScore,
+              confidence: ranking.confidence,
+              decision: ranking.decision,
+            })) as Prisma.InputJsonValue,
+            inputTokens: finalResult.inputTokens,
+            outputTokens: finalResult.outputTokens,
+            estimatedCostUsd: finalResult.estimatedCostUsd,
+            cached: Boolean(finalCached),
+          },
+          update: {},
+        });
+      }
       for (const asset of frameAssets)
         await tx.videoAsset.upsert({
           where: { sourceId_kind: { sourceId: job.sourceId, kind: asset.kind } },
@@ -545,6 +817,13 @@ export async function rankCandidates(
         } = ranking;
         void _candidateId;
         void _eventType;
+        void _eventStart;
+        void _keyMoment;
+        void _payoffEnd;
+        void _recommendedStart;
+        void _recommendedEnd;
+        void _durationReason;
+        void _eventSummary;
         await tx.highlightScore.upsert({
           where: { candidateId: ranking.candidateId },
           create: {
@@ -553,9 +832,9 @@ export async function rankCandidates(
             analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
             provider: result.provider,
             model: result.model,
-            promptVersion: RANKING_PROMPT_VERSION,
-            inputHash,
-            cached: Boolean(cached),
+            promptVersion: finalResult ? FINAL_RANKING_PROMPT_VERSION : RANKING_PROMPT_VERSION,
+            inputHash: finalInputHash ?? inputHash,
+            cached: Boolean(finalResult ? finalCached : cached),
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
             estimatedCostUsd: result.estimatedCostUsd,
@@ -568,9 +847,9 @@ export async function rankCandidates(
             analysisMethod: result.provider === 'openai' ? 'AI' : 'HEURISTIC_FALLBACK',
             provider: result.provider,
             model: result.model,
-            promptVersion: RANKING_PROMPT_VERSION,
-            inputHash,
-            cached: Boolean(cached),
+            promptVersion: finalResult ? FINAL_RANKING_PROMPT_VERSION : RANKING_PROMPT_VERSION,
+            inputHash: finalInputHash ?? inputHash,
+            cached: Boolean(finalResult ? finalCached : cached),
             inputTokens: result.inputTokens,
             outputTokens: result.outputTokens,
             estimatedCostUsd: result.estimatedCostUsd,

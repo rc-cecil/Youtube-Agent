@@ -2,6 +2,7 @@ import {
   ADAPTIVE_SAMPLING_POLICY,
   DURATION_POLICY,
   DUPLICATE_POLICY,
+  type resolveDuplicatePolicy,
   resolveClusteringProfile,
 } from '../../config/src/media-policy.js';
 import type { AnalysisSignal } from './index.js';
@@ -209,7 +210,10 @@ export type DuplicateEvidence = {
   sameGame: boolean;
 };
 
-export function evaluateDuplicate(evidence: DuplicateEvidence, policy = DUPLICATE_POLICY) {
+export function evaluateDuplicate(
+  evidence: DuplicateEvidence,
+  policy: ReturnType<typeof resolveDuplicatePolicy> = DUPLICATE_POLICY,
+) {
   const temporal = Math.max(evidence.shorterClipOverlap, evidence.temporalIoU);
   const components = {
     eventIdentity: evidence.sameEvent ? 1 : 0,
